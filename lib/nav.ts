@@ -1,23 +1,17 @@
 import {
   LayoutDashboard,
   Package2,
-  Receipt,
+  ShoppingCart,
   Wallet,
-  Settings,
-  Warehouse,
-  Truck,
   type LucideIcon,
 } from 'lucide-react';
 
-/** Single source for sidebar + mobile bottom nav. */
+/** V1 navigation only — Inventory, Vendors, Settings hidden from main nav (routes still exist). */
 export const MAIN_NAV_ITEMS: ReadonlyArray<{ href: string; label: string; Icon: LucideIcon }> = [
   { href: '/', label: 'Dashboard', Icon: LayoutDashboard },
-  { href: '/products', label: 'Products', Icon: Package2 },
-  { href: '/inventory', label: 'Inventory', Icon: Warehouse },
-  { href: '/sales', label: 'Sales', Icon: Receipt },
+  { href: '/sales', label: 'Sales', Icon: ShoppingCart },
   { href: '/expenses', label: 'Expenses', Icon: Wallet },
-  { href: '/vendors', label: 'Vendors', Icon: Truck },
-  { href: '/settings', label: 'Settings', Icon: Settings },
+  { href: '/products', label: 'Products', Icon: Package2 },
 ];
 
 export function isMainNavActive(pathname: string, href: string): boolean {

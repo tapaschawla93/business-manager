@@ -4,7 +4,7 @@ import type { ReactNode } from 'react';
 import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
 import { useEffect, useState } from 'react';
-import { LogOut, Building2 } from 'lucide-react';
+import { LogOut, TrendingUp } from 'lucide-react';
 import { getSupabaseClient } from '@/lib/supabaseClient';
 import { MAIN_NAV_ITEMS, isMainNavActive } from '@/lib/nav';
 import { cn } from '@/lib/utils';
@@ -46,17 +46,17 @@ export function AppShell({ children }: { children: ReactNode }) {
   return (
     <div className="min-h-screen bg-background">
       <aside
-        className="fixed left-0 top-0 z-20 hidden h-screen w-[var(--sidebar-width)] flex-col border-r border-border bg-card shadow-sm md:flex"
+        className="fixed left-0 top-0 z-20 hidden h-screen w-[var(--sidebar-width)] flex-col border-r border-border/70 bg-card shadow-[4px_0_24px_-12px_rgba(0,0,0,0.08)] md:flex"
         aria-label="Sidebar"
       >
-        <div className="flex items-center gap-2 border-b border-border p-6">
-          <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-primary text-primary-foreground">
-            <Building2 className="h-5 w-5" aria-hidden />
+        <div className="flex items-center gap-3 px-6 py-6">
+          <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-primary text-primary-foreground shadow-sm shadow-primary/25">
+            <TrendingUp className="h-5 w-5" aria-hidden strokeWidth={2.5} />
           </div>
           <span className="text-lg font-bold tracking-tight text-foreground">BizManager</span>
         </div>
 
-        <nav className="flex flex-1 flex-col gap-1 p-4" aria-label="Main">
+        <nav className="flex flex-1 flex-col gap-1 px-4" aria-label="Main">
           {MAIN_NAV_ITEMS.map(({ href, label, Icon }) => {
             const active = isMainNavActive(pathname, href);
             return (
@@ -64,10 +64,10 @@ export function AppShell({ children }: { children: ReactNode }) {
                 key={href}
                 href={href}
                 className={cn(
-                  'flex min-h-10 items-center gap-3 rounded-full px-3 py-2.5 text-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2',
+                  'flex min-h-11 items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-semibold transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2',
                   active
-                    ? 'bg-accent text-primary shadow-sm ring-1 ring-primary/10'
-                    : 'text-muted-foreground hover:bg-muted hover:text-foreground',
+                    ? 'bg-primary/10 text-primary shadow-sm'
+                    : 'text-muted-foreground hover:bg-muted/80 hover:text-foreground',
                 )}
               >
                 <Icon className="h-5 w-5 shrink-0" strokeWidth={active ? 2.25 : 2} aria-hidden />
@@ -77,32 +77,32 @@ export function AppShell({ children }: { children: ReactNode }) {
           })}
         </nav>
 
-        <div className="mt-auto border-t border-border p-4">
+        <div className="mt-auto space-y-2 border-t border-border/70 p-4">
           <Button
             type="button"
             variant="ghost"
-            className="mb-2 h-10 w-full justify-start text-destructive hover:bg-destructive/10 hover:text-destructive"
+            className="h-10 w-full justify-start font-semibold text-destructive hover:bg-destructive/10 hover:text-destructive"
             onClick={() => void handleSignOut()}
           >
             <LogOut className="mr-2 h-4 w-4" aria-hidden />
             Logout
           </Button>
-          <div className="flex items-center gap-3 rounded-card bg-muted/50 px-3 py-2.5">
-            <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-primary/15 text-sm font-semibold text-primary">
+          <div className="flex items-center gap-3 rounded-xl border border-border/60 bg-muted/30 px-3 py-3">
+            <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-primary/12 text-sm font-bold text-primary">
               {email ? initialsFromEmail(email) : '—'}
             </div>
             <div className="min-w-0 flex-1">
-              <p className="truncate text-sm font-medium text-foreground" title={email ?? undefined}>
+              <p className="truncate text-sm font-semibold text-foreground" title={email ?? undefined}>
                 {email ?? '…'}
               </p>
-              <p className="text-xs text-muted-foreground">Owner</p>
+              <p className="text-xs text-muted-foreground">Admin</p>
             </div>
           </div>
         </div>
       </aside>
 
       <main className="min-h-screen md:pl-[var(--sidebar-width)]">
-        <div className="mx-auto max-w-7xl px-[var(--main-padding-x)] pb-[var(--main-bottom-mobile)] py-6 md:px-[var(--main-padding-x-md)] md:pb-[var(--main-bottom-desktop)] md:py-6">
+        <div className="mx-auto max-w-7xl px-[var(--main-padding-x)] pb-[var(--main-bottom-mobile)] py-6 md:px-[var(--main-padding-x-md)] md:pb-[var(--main-bottom-desktop)] md:py-8">
           {children}
         </div>
       </main>

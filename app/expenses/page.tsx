@@ -27,6 +27,8 @@ import {
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog';
 import { Fab } from '@/components/Fab';
+import { Download, Plus } from 'lucide-react';
+import { downloadCsv, rowsToCsv } from '@/lib/exportCsv';
 import { PageHeader } from '@/components/PageHeader';
 
 export default function ExpensesPage() {
@@ -144,11 +146,40 @@ export default function ExpensesPage() {
     <div className="space-y-6">
       <PageHeader
         title="Expenses"
-        description="Record spend; link a product to add units to inventory. Total is quantity × unit cost."
+        description="Manage purchases and operating costs. Total is quantity × unit cost."
         actions={
-          <Button type="button" onClick={openNew}>
-            New expense
-          </Button>
+          <>
+            <Button
+              type="button"
+              variant="outline"
+              className="h-11 gap-2 rounded-xl border-border/80 font-semibold"
+              onClick={() => {
+                if (!expenses.length) {
+                  toast.message('No expenses to export.');
+                  return;
+                }
+                const headers = ['date', 'vendor', 'item', 'quantity', 'unit_cost', 'total', 'payment'];
+                const csvRows = expenses.map((e) => ({
+                  date: e.date,
+                  vendor: e.vendor_name,
+                  item: e.item_description,
+                  quantity: e.quantity,
+                  unit_cost: e.unit_cost ?? '',
+                  total: e.total_amount,
+                  payment: e.payment_mode,
+                }));
+                downloadCsv('expenses.csv', rowsToCsv(headers, csvRows));
+                toast.success('Exported expenses.csv');
+              }}
+            >
+              <Download className="h-4 w-4" aria-hidden />
+              Export CSV
+            </Button>
+            <Button type="button" className="h-11 gap-2 rounded-xl font-semibold shadow-sm" onClick={openNew}>
+              <Plus className="h-4 w-4" aria-hidden />
+              New expense
+            </Button>
+          </>
         }
       />
 
@@ -167,9 +198,9 @@ export default function ExpensesPage() {
       <Dialog open={dialogOpen} onOpenChange={handleDialogOpenChange}>
         <DialogContent className="max-h-[min(90vh,720px)] overflow-y-auto sm:max-w-lg">
           <DialogHeader>
-            <DialogTitle>{editing ? 'Edit expense' : 'New expense'}</DialogTitle>
+            <DialogTitle>{editing ? 'Edit expense' : 'Add New Purchase'}</DialogTitle>
             <DialogDescription>
-              {editing ? 'Update this record, then save.' : 'Enter vendor, item, and amounts.'}
+              {editing ? 'Update this record, then save.' : 'Record vendor, items, and payment.'}
             </DialogDescription>
           </DialogHeader>
           <ExpenseForm

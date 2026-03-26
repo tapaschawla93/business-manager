@@ -8,17 +8,40 @@ import { formatInrDisplay } from '@/lib/formatInr';
 import { PageHeader } from '@/components/PageHeader';
 import { KPICard } from '@/components/dashboard/KPICard';
 import { TopProductsTable } from '@/components/dashboard/TopProductsTable';
+import { Skeleton } from '@/components/ui/skeleton';
+import { Button } from '@/components/ui/button';
 import {
   BarChart3,
+  CreditCard,
+  Download,
+  Filter,
   HandCoins,
-  Receipt,
-  Wallet,
-  TrendingUp,
   CircleDollarSign,
-  ChartLine,
+  Package2,
+  TrendingUp,
   Warehouse,
 } from 'lucide-react';
 import { toast } from 'sonner';
+
+function DashboardSkeleton() {
+  return (
+    <div className="space-y-8">
+      <div className="space-y-3">
+        <Skeleton className="h-9 w-64 rounded-lg" />
+        <Skeleton className="h-4 w-full max-w-xl rounded-md" />
+        <div className="flex flex-wrap gap-2 pt-2">
+          <Skeleton className="h-10 w-40 rounded-xl" />
+          <Skeleton className="h-10 w-44 rounded-xl" />
+        </div>
+      </div>
+      <div className="grid grid-cols-2 gap-4 md:grid-cols-3">
+        {Array.from({ length: 6 }).map((_, i) => (
+          <Skeleton key={i} className="h-[140px] rounded-card" />
+        ))}
+      </div>
+    </div>
+  );
+}
 
 export default function HomePage() {
   const router = useRouter();
@@ -93,7 +116,7 @@ export default function HomePage() {
   }, [isAuthenticated]);
 
   if (checkingSession) {
-    return <p className="ui-page-description">Checking session…</p>;
+    return <DashboardSkeleton />;
   }
 
   if (!isAuthenticated) {
@@ -101,75 +124,125 @@ export default function HomePage() {
   }
 
   if (loadingDashboard) {
-    return <p className="ui-page-description">Loading dashboard…</p>;
+    return <DashboardSkeleton />;
   }
+
+  const profitMarginPct =
+    kpis && kpis.total_revenue > 0
+      ? `${((kpis.gross_profit / kpis.total_revenue) * 100).toFixed(1)}%`
+      : '0.0%';
 
   return (
     <div className="space-y-8">
       <PageHeader
-        title="Dashboard"
+        title="Dashboard Overview"
         description="Operating summary: revenue, spend, stock at cost, and net cash position."
+        actions={
+          <>
+            <Button
+              type="button"
+              variant="outline"
+              className="h-11 gap-2 rounded-xl border-border/80 font-semibold shadow-sm"
+              onClick={() => toast.message('Backup Database — connect storage in a future release.')}
+            >
+              <Download className="h-4 w-4" aria-hidden />
+              Backup Database
+            </Button>
+            <Button
+              type="button"
+              variant="outline"
+              className="h-11 gap-2 rounded-xl border-border/80 font-semibold shadow-sm"
+              onClick={() => toast.message('Yearly Performance — date filters ship in V2 per PRD.')}
+            >
+              <Filter className="h-4 w-4" aria-hidden />
+              Yearly Performance
+            </Button>
+          </>
+        }
       />
 
       {error ? <p className="text-sm text-destructive">{error}</p> : null}
 
       {kpis ? (
         <>
-          <section className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+          <section className="grid grid-cols-2 gap-4 md:grid-cols-3">
             <KPICard
-              icon={<ChartLine className="h-4 w-4" aria-hidden />}
-              label="Total revenue"
+              icon={<Warehouse className="h-5 w-5" aria-hidden />}
+              label="Inventory Value"
+              value={formatInrDisplay(kpis.inventory_value)}
+              hint="Stock at catalogue cost"
+              trendLabel="Stock"
+              trendVariant="neutral"
+              iconClassName="bg-muted text-muted-foreground"
+            />
+            <KPICard
+              icon={<CircleDollarSign className="h-5 w-5" aria-hidden />}
+              label="Total Revenue"
               value={formatInrDisplay(kpis.total_revenue)}
               hint="All-time sales"
+              trendLabel={kpis.total_revenue > 0 ? 'Active' : '—'}
+              trendVariant={kpis.total_revenue > 0 ? 'positive' : 'neutral'}
               valueClassName="text-finance-positive"
+              iconClassName="bg-primary/12 text-primary"
             />
             <KPICard
-              icon={<Receipt className="h-4 w-4" aria-hidden />}
-              label="Total expenses"
-              value={formatInrDisplay(kpis.total_expenses)}
-              hint="All-time spend"
-              valueClassName="text-finance-negative"
-            />
-            <KPICard
-              icon={<Warehouse className="h-4 w-4" aria-hidden />}
-              label="Inventory value"
-              value={formatInrDisplay(kpis.inventory_value)}
-              hint="Units on hand × catalogue cost"
-              iconClassName="bg-primary/10 text-primary"
-            />
-            <KPICard
-              icon={<Wallet className="h-4 w-4" aria-hidden />}
-              label="Cash in hand"
+              icon={<CreditCard className="h-5 w-5" aria-hidden />}
+              label="Total Cash Available"
               value={formatInrDisplay(kpis.cash_in_hand)}
-              hint="Revenue − expenses (simplified)"
+              hint="Net cash position"
+              trendLabel="Live"
+              trendVariant="neutral"
+              iconClassName="bg-muted text-muted-foreground"
+            />
+            <KPICard
+              icon={<TrendingUp className="h-5 w-5" aria-hidden />}
+              label="Net Profit"
+              value={formatInrDisplay(kpis.gross_profit)}
+              hint="Revenue − expenses"
+              trendLabel={profitMarginPct}
+              trendVariant="neutral"
+              valueClassName="text-finance-positive"
+              iconClassName="bg-primary/12 text-primary"
+            />
+            <KPICard
+              icon={<Package2 className="h-5 w-5" aria-hidden />}
+              label="Total Sales"
+              value={String(kpis.sales_count)}
+              hint="Completed transactions"
+              trendLabel={kpis.sales_count > 0 ? '+' + String(Math.min(kpis.sales_count, 99)) : '—'}
+              trendVariant={kpis.sales_count > 0 ? 'positive' : 'neutral'}
+              iconClassName="bg-muted text-muted-foreground"
+            />
+            <KPICard
+              icon={<BarChart3 className="h-5 w-5" aria-hidden />}
+              label="Avg Sale Value"
+              value={formatInrDisplay(kpis.average_sale_value)}
+              hint="Revenue ÷ sales count"
+              trendLabel="All-time"
+              trendVariant="muted"
+              iconClassName="bg-muted text-muted-foreground"
             />
           </section>
 
-          <section className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+          <section className="grid grid-cols-2 gap-4 md:grid-cols-2">
             <KPICard
-              icon={<BarChart3 className="h-4 w-4" aria-hidden />}
-              label="Gross profit"
-              value={formatInrDisplay(kpis.gross_profit)}
-              hint="Revenue − expenses"
-              valueClassName="text-finance-positive"
+              icon={<HandCoins className="h-5 w-5" aria-hidden />}
+              label="Total Expenses"
+              value={formatInrDisplay(kpis.total_expenses)}
+              hint="All-time spend"
+              trendLabel="Recorded"
+              trendVariant="muted"
+              valueClassName="text-finance-negative"
+              iconClassName="bg-muted text-muted-foreground"
             />
             <KPICard
-              icon={<HandCoins className="h-4 w-4" aria-hidden />}
-              label="Online received"
+              icon={<CircleDollarSign className="h-5 w-5" aria-hidden />}
+              label="Online Received"
               value={formatInrDisplay(kpis.online_received)}
               hint="Online payment sales"
-            />
-            <KPICard
-              icon={<CircleDollarSign className="h-4 w-4" aria-hidden />}
-              label="Sales count"
-              value={String(kpis.sales_count)}
-              hint="Total transactions"
-            />
-            <KPICard
-              icon={<TrendingUp className="h-4 w-4" aria-hidden />}
-              label="Average sale value"
-              value={formatInrDisplay(kpis.average_sale_value)}
-              hint="Revenue ÷ sales count"
+              trendLabel="UPI / Card"
+              trendVariant="neutral"
+              iconClassName="bg-primary/12 text-primary"
             />
           </section>
 

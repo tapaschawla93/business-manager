@@ -54,8 +54,8 @@ function Field({
   children: ReactNode;
 }) {
   return (
-    <div className="space-y-1">
-      <Label className="text-xs">
+    <div className="space-y-1.5">
+      <Label className="text-[11px] font-bold uppercase tracking-wide text-muted-foreground">
         {label}
         {required ? ' *' : ''}
       </Label>
@@ -371,10 +371,14 @@ export function ExpenseForm({
                   required
                 />
               </Field>
-              <div className="space-y-1">
-                <Label className="text-xs">Total</Label>
-                <div className="flex h-10 items-center rounded-lg border border-input bg-muted/40 px-3 text-sm font-semibold text-primary">
-                  {totalPreview == null ? '—' : formatInrDisplay(totalPreview)}
+              <div className="sm:col-span-2 space-y-2 rounded-xl border border-blue-200/80 bg-blue-50/80 px-4 py-3 dark:border-blue-900/50 dark:bg-blue-950/40">
+                <div className="flex items-center justify-between gap-3">
+                  <span className="text-[11px] font-bold uppercase tracking-wide text-blue-900/70 dark:text-blue-200/80">
+                    Net cost
+                  </span>
+                  <span className="text-xl font-bold tabular-nums text-blue-900 dark:text-blue-100">
+                    {totalPreview == null ? '₹0' : formatInrDisplay(totalPreview)}
+                  </span>
                 </div>
               </div>
               <div className="sm:col-span-2 space-y-1">
@@ -394,7 +398,7 @@ export function ExpenseForm({
               Cancel
             </Button>
           )}
-          <Button type="submit" size="full" disabled={saving}>
+          <Button type="submit" size="full" disabled={saving} className="h-12 rounded-xl text-base font-semibold">
             {saving ? 'Saving…' : editing ? 'Save changes' : 'Save expense'}
           </Button>
         </div>

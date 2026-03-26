@@ -6,7 +6,7 @@
   :root {
     /* Canvas & surfaces */
     /* Tailwind gray-50 (#f9fafb) */
-    --background: 210 20% 98%;
+    --background: 210 18% 96%;
     --foreground: 240 6% 10%;
     --card: 0 0% 100%;
     --card-foreground: 240 6% 10%;
@@ -31,6 +31,7 @@
     --radius: 0.625rem;
     /* Reference UI feels closer to rounded-2xl */
     --radius-card: 1rem;
+    --shadow-soft: 0 1px 3px 0 rgb(0 0 0 / 0.06), 0 4px 12px -2px rgb(0 0 0 / 0.05);
 
     /* Layout (Phase A) — FAB clears mobile nav in one formula */
     --sidebar-width: 240px;
@@ -68,10 +69,10 @@
 
 @layer components {
   .ui-page-title {
-    @apply text-2xl font-bold tracking-tight text-foreground md:text-3xl;
+    @apply text-2xl font-bold tracking-tight text-foreground sm:text-3xl;
   }
   .ui-page-description {
-    @apply text-sm text-muted-foreground;
+    @apply text-sm text-muted-foreground sm:text-base;
   }
   .ui-section-title {
     @apply text-base font-semibold text-foreground;

@@ -80,7 +80,7 @@ function parseSaveSaleResult(data: unknown): {
  * Mobile-first sale entry: search product → set qty/price → add more lines → Save (RPC).
  * Stored totals always come from save_sale RPC (server reads product cost/MRP).
  */
-export function SalesForm() {
+export function SalesForm({ onSaved, compact }: { onSaved?: () => void; compact?: boolean } = {}) {
   const [products, setProducts] = useState<Product[]>([]);
   const [loadingProducts, setLoadingProducts] = useState(true);
   const [date, setDate] = useState(todayLocalISODate);
@@ -245,10 +245,14 @@ export function SalesForm() {
     setLines([emptyLine()]);
     void loadProducts();
     void refreshStock();
+    onSaved?.();
   }
 
   return (
-    <form onSubmit={handleSubmit} className="mx-auto max-w-lg space-y-5">
+    <form
+      onSubmit={handleSubmit}
+      className={compact ? 'space-y-5' : 'mx-auto max-w-lg space-y-5'}
+    >
       <Card>
         <CardContent className="space-y-4 p-4">
           <div className="grid gap-3">

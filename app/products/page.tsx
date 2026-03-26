@@ -11,7 +11,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Badge } from '@/components/ui/badge';
-import { Card, CardContent, CardHeader } from '@/components/ui/card';
+import { Card, CardContent } from '@/components/ui/card';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import {
   Dialog,
@@ -20,6 +20,9 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
+import { PageHeader } from '@/components/PageHeader';
+import { Fab } from '@/components/Fab';
+import { Skeleton } from '@/components/ui/skeleton';
 type MarginTone = 'good' | 'warn' | 'bad' | 'na';
 
 /** UI margin from MRP & cost (catalog); not stored. */
@@ -268,45 +271,53 @@ export default function ProductsPage() {
   }
 
   if (checkingSession || !sessionOk) {
-    return <p className="text-sm text-muted-foreground">Loading…</p>;
+    return (
+      <div className="space-y-6">
+        <Skeleton className="h-10 w-72 rounded-lg" />
+        <Skeleton className="h-12 w-full max-w-md rounded-xl" />
+        <Skeleton className="h-64 w-full rounded-card" />
+      </div>
+    );
   }
 
   return (
     <div className="space-y-6">
-        <header className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-          <div className="min-w-0">
-            <h1 className="text-2xl font-medium tracking-tight text-foreground">Product Repository</h1>
-            <p className="mt-1 text-sm text-muted-foreground">Manage your product catalogue</p>
-          </div>
-          <Button type="button" onClick={openAdd} className="gap-2 sm:self-start">
-            <Plus className="h-4 w-4" />
+      <PageHeader
+        title="Product Repository"
+        description="Master list of all products and their category mappings."
+        actions={
+          <Button type="button" onClick={openAdd} className="h-11 gap-2 rounded-xl font-semibold shadow-sm">
+            <Plus className="h-4 w-4" aria-hidden />
             Add Product
           </Button>
-        </header>
+        }
+      />
 
-        <div className="flex flex-col justify-end gap-3 sm:flex-row sm:items-center sm:justify-between">
-          <div className="relative w-full sm:max-w-sm">
-            <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-            <Input
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-              placeholder="Search products..."
-              className="pl-9"
-            />
-          </div>
-          <Button type="button" variant="outline" size="sm" onClick={() => void loadProducts()} className="gap-2">
-            <RefreshCw className="h-4 w-4" />
-            Refresh
-          </Button>
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+        <div className="relative w-full sm:max-w-md">
+          <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+          <Input
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+            placeholder="Search products..."
+            className="rounded-xl pl-10"
+          />
         </div>
+        <Button
+          type="button"
+          variant="outline"
+          className="h-11 gap-2 rounded-xl border-border/80 font-semibold"
+          onClick={() => void loadProducts()}
+        >
+          <RefreshCw className="h-4 w-4" />
+          Refresh
+        </Button>
+      </div>
 
-        {error && <p className="text-sm text-destructive">{error}</p>}
+      {error && <p className="text-sm text-destructive">{error}</p>}
 
-        <Card>
-          <CardHeader className="pb-2">
-            <h2 className="ui-section-title">Products</h2>
-          </CardHeader>
-          <CardContent className="pt-0">
+      <Card className="overflow-hidden border-border/80 shadow-md">
+          <CardContent className="p-0">
             {loading ? (
               <p className="text-sm text-muted-foreground">Loading products…</p>
             ) : products.length === 0 ? (
@@ -329,15 +340,17 @@ export default function ProductsPage() {
                 <p className="text-sm text-muted-foreground">Try a different search term.</p>
               </div>
             ) : (
+              <div className="overflow-x-auto">
               <Table>
                 <TableHeader>
-                  <TableRow className="hover:bg-transparent">
-                    <TableHead>Name</TableHead>
-                    <TableHead>Category</TableHead>
-                    <TableHead className="text-right">MRP</TableHead>
-                    <TableHead className="text-right">Cost</TableHead>
-                    <TableHead className="text-right">Margin%</TableHead>
-                    <TableHead className="text-right w-[110px]">Actions</TableHead>
+                  <TableRow className="border-border/60 bg-muted/50 hover:bg-muted/50">
+                    <TableHead className="ui-table-head">Product name</TableHead>
+                    <TableHead className="ui-table-head">Category</TableHead>
+                    <TableHead className="ui-table-head">Variant</TableHead>
+                    <TableHead className="ui-table-head text-right">MRP</TableHead>
+                    <TableHead className="ui-table-head text-right">Cost</TableHead>
+                    <TableHead className="ui-table-head text-right">Margin</TableHead>
+                    <TableHead className="ui-table-head text-right w-[110px]">Actions</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
@@ -356,10 +369,11 @@ export default function ProductsPage() {
                       <TableRow key={p.id} className="hover:bg-muted/40">
                         <TableCell className="font-medium text-foreground">{p.name}</TableCell>
                         <TableCell>
-                          <Badge variant="secondary" className="font-medium">
+                          <Badge variant="secondary" className="rounded-md text-[10px] font-bold uppercase tracking-wide">
                             {p.category}
                           </Badge>
                         </TableCell>
+                        <TableCell className="text-sm">{p.variant ?? '—'}</TableCell>
                         <TableCell className="text-right font-semibold tabular-nums">
                           {formatInrDisplay(Number(p.mrp))}
                         </TableCell>
@@ -398,14 +412,17 @@ export default function ProductsPage() {
                   })}
                 </TableBody>
               </Table>
+              </div>
             )}
           </CardContent>
-        </Card>
+      </Card>
 
-        <Dialog open={dialogOpen} onOpenChange={handleDialogOpenChange}>
+      <Fab aria-label="Add product" onClick={openAdd} />
+
+      <Dialog open={dialogOpen} onOpenChange={handleDialogOpenChange}>
           <DialogContent className="max-h-[min(90vh,720px)] overflow-y-auto sm:max-w-lg">
             <DialogHeader>
-              <DialogTitle>{editingId ? 'Edit product' : 'Add product'}</DialogTitle>
+              <DialogTitle>{editingId ? 'Edit product' : 'Add New Product to Repository'}</DialogTitle>
               <DialogDescription>Fill in the details below.</DialogDescription>
             </DialogHeader>
             <form onSubmit={(e) => void handleSubmit(e)} className="space-y-4">
@@ -497,8 +514,8 @@ function Field({
   children: ReactNode;
 }) {
   return (
-    <div className="space-y-1">
-      <Label className="text-xs">
+    <div className="space-y-1.5">
+      <Label className="text-[11px] font-bold uppercase tracking-wide text-muted-foreground">
         {label}
         {required ? ' *' : ''}
       </Label>
