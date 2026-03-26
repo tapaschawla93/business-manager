@@ -1,3 +1,89 @@
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
+
+@layer base {
+  :root {
+    /* Canvas & surfaces */
+    --background: 240 5% 96%;
+    --foreground: 240 6% 10%;
+    --card: 0 0% 100%;
+    --card-foreground: 240 6% 10%;
+    --popover: 0 0% 100%;
+    --popover-foreground: 240 6% 10%;
+
+    --primary: 142 71% 36%;
+    --primary-foreground: 0 0% 100%;
+    --secondary: 240 5% 96%;
+    --secondary-foreground: 240 6% 10%;
+    --muted: 240 5% 92%;
+    --muted-foreground: 240 4% 45%;
+    --accent: 142 76% 95%;
+    --accent-foreground: 142 76% 28%;
+    --destructive: 0 72% 51%;
+    --destructive-foreground: 0 0% 100%;
+    --border: 240 6% 90%;
+    --input: 240 6% 90%;
+    --ring: 142 71% 36%;
+
+    /* Controls vs cards (Phase B) */
+    --radius: 0.625rem;
+    --radius-card: 0.75rem;
+
+    /* Layout (Phase A) — FAB clears mobile nav in one formula */
+    --sidebar-width: 240px;
+    --mobile-nav-height: 4rem;
+    --fab-gap: 0.75rem;
+    --main-padding-x: 1rem;
+    --main-padding-x-md: 1.5rem;
+    --main-bottom-mobile: calc(var(--mobile-nav-height) + 1.5rem);
+    --main-bottom-desktop: 2rem;
+
+    /* Semantic finance text (maps to primary / destructive; use utilities in pages later) */
+    --finance-positive: 142 71% 36%;
+    --finance-negative: 0 72% 51%;
+  }
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+  body {
+    @apply bg-background text-foreground antialiased;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    *,
+    *::before,
+    *::after {
+      animation-duration: 0.01ms !important;
+      animation-iteration-count: 1 !important;
+      transition-duration: 0.01ms !important;
+    }
+  }
+}
+
+@layer components {
+  .ui-page-title {
+    @apply text-2xl font-bold tracking-tight text-foreground md:text-3xl;
+  }
+  .ui-page-description {
+    @apply text-sm text-muted-foreground;
+  }
+  .ui-section-title {
+    @apply text-base font-semibold text-foreground;
+  }
+  .ui-table-head {
+    @apply text-left text-[11px] font-semibold uppercase tracking-wider text-muted-foreground;
+  }
+}
+
+@layer utilities {
+  .text-finance-positive {
+    color: hsl(var(--finance-positive));
+  }
+  .text-finance-negative {
+    color: hsl(var(--finance-negative));
+  }
+}

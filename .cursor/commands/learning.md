@@ -36,3 +36,27 @@ Present the concept at **three increasing complexity levels**. Let the user abso
 - Technical but not jargon-heavy
 - Concrete examples from the current codebase
 - Acknowledge complexity honestly - "this is genuinely tricky because..."
+
+## Learning Command
+
+When learnings are provided:
+
+1. Update the file at docs/knowledgebase.md
+
+2. If the file exists:
+   - Append the new learnings under the correct module section
+   - Do not overwrite existing content
+
+3. If the file does not exist:
+   - Create docs/knowledgebase.md
+   - Add structured sections
+
+4. Format:
+   - Use headings like: ## Module Learnings
+   - Use subheadings per module (e.g., ### Product Repository (V1))
+   - Use bullet points
+   - Avoid duplication
+
+5. Do not modify unrelated sections
+
+This ensures all learnings are persisted in the project knowledge base.
