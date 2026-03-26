@@ -3,7 +3,7 @@
 import { FormEvent, useCallback, useEffect, useMemo, useState, type ReactNode } from 'react';
 import { useRouter } from 'next/navigation';
 import { toast } from 'sonner';
-import { Pencil, Plus, RefreshCw, Search, Trash2 } from 'lucide-react';
+import { Pencil, Plus, RefreshCw, Search, Trash2, Boxes, ChevronRight } from 'lucide-react';
 import { formatInrDisplay } from '@/lib/formatInr';
 import { getSupabaseClient } from '@/lib/supabaseClient';
 import type { Product } from '@/lib/types/product';
@@ -52,6 +52,7 @@ export default function ProductsPage() {
   const [sessionOk, setSessionOk] = useState(false);
   const [checkingSession, setCheckingSession] = useState(true);
   const [businessId, setBusinessId] = useState<string | null>(null);
+  const [userEmail, setUserEmail] = useState<string | null>(null);
 
   const [products, setProducts] = useState<Product[]>([]);
   const [loading, setLoading] = useState(true);
@@ -97,6 +98,7 @@ export default function ProductsPage() {
         router.replace('/login');
         return;
       }
+      setUserEmail(sessionData.session.user.email ?? null);
       setSessionOk(true);
 
       const { data: profile, error: profileError } = await supabase
@@ -281,7 +283,33 @@ export default function ProductsPage() {
 
   return (
     <div className="space-y-6">
-      <PageHeader title="Product Repository" description="Master list of all products and their category mappings" />
+      <section className="rounded-card border border-border bg-card p-4 shadow-sm sm:p-5">
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+          <div className="min-w-0">
+            <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+              <Boxes className="h-4 w-4" />
+              Product Management
+            </div>
+            <h1 className="mt-1 text-2xl font-semibold tracking-tight text-foreground">Products</h1>
+          </div>
+          <div className="flex items-center gap-3 rounded-full border border-border bg-muted/50 px-3 py-1.5">
+            <div className="flex h-8 w-8 items-center justify-center rounded-full bg-primary/15 text-xs font-semibold text-primary">
+              {(userEmail?.slice(0, 2) ?? 'OW').toUpperCase()}
+            </div>
+            <div className="min-w-0">
+              <p className="truncate text-sm font-medium text-foreground" title={userEmail ?? undefined}>
+                {userEmail ?? 'Owner'}
+              </p>
+              <p className="text-xs text-muted-foreground">Owner</p>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <PageHeader
+        title="Product Repository"
+        description="Master list of all products and their category mappings"
+      />
 
       <div className="flex flex-col justify-end gap-3 sm:flex-row">
         <div className="relative w-full sm:max-w-sm">
@@ -302,12 +330,19 @@ export default function ProductsPage() {
       {error && <p className="text-sm text-destructive">{error}</p>}
 
       <Card>
-        <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-          <h3 className="ui-section-title">Products</h3>
-          <Button type="button" variant="outline" size="sm" onClick={() => void loadProducts()}>
-            <RefreshCw className="mr-1 h-4 w-4" />
-            Refresh
-          </Button>
+        <CardHeader className="pb-2">
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+            <div>
+              <h3 className="ui-section-title">All Products</h3>
+              <p className="mt-1 text-sm text-muted-foreground">
+                Browse and manage your product catalog.
+              </p>
+            </div>
+            <Button type="button" variant="outline" size="sm" onClick={() => void loadProducts()}>
+              <RefreshCw className="mr-1 h-4 w-4" />
+              Refresh
+            </Button>
+          </div>
         </CardHeader>
         <CardContent className="pt-0">
           {loading ? (
@@ -331,7 +366,10 @@ export default function ProductsPage() {
                 {filteredProducts.map((p) => (
                   <TableRow key={p.id}>
                     <TableCell className="font-medium text-foreground">
-                      {p.name}
+                      <div className="flex items-center gap-2">
+                        <span>{p.name}</span>
+                        <ChevronRight className="h-3.5 w-3.5 text-muted-foreground" />
+                      </div>
                     </TableCell>
                     <TableCell>
                       <Badge variant="neutral" className="font-semibold">
@@ -354,7 +392,7 @@ export default function ProductsPage() {
                       <div className="flex justify-end gap-1">
                         <Button
                           type="button"
-                          variant="ghost"
+                          variant="outline"
                           size="icon"
                           className="h-9 w-9"
                           aria-label="Edit"
@@ -364,9 +402,9 @@ export default function ProductsPage() {
                         </Button>
                         <Button
                           type="button"
-                          variant="ghost"
+                          variant="outline"
                           size="icon"
-                          className="h-9 w-9 text-muted-foreground hover:text-destructive"
+                          className="h-9 w-9 border-destructive/30 text-destructive hover:bg-destructive/10"
                           aria-label="Archive"
                           onClick={() => setArchiveTargetId(p.id)}
                         >
@@ -387,8 +425,10 @@ export default function ProductsPage() {
       <Dialog open={dialogOpen} onOpenChange={handleDialogOpenChange}>
         <DialogContent className="max-h-[min(90vh,720px)] overflow-y-auto sm:max-w-lg">
           <DialogHeader>
-            <DialogTitle>{editingId ? 'Edit product' : 'Add product'}</DialogTitle>
-            <DialogDescription>Product name and category are required. Variant is optional.</DialogDescription>
+            <DialogTitle>{editingId ? 'Edit Product in Repository' : 'Add New Product to Repository'}</DialogTitle>
+            <DialogDescription>
+              Product name and category are required. Variant is optional.
+            </DialogDescription>
           </DialogHeader>
           <form onSubmit={(e) => void handleSubmit(e)} className="space-y-4">
             <div className="grid gap-3 sm:grid-cols-2">

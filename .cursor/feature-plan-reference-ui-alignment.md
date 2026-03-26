@@ -1,6 +1,6 @@
 # Feature Implementation Plan — Reference UI Alignment (visual-only)
 
-**Overall Progress:** `82%`
+**Overall Progress:** `86%`
 
 ## TLDR
 
@@ -50,11 +50,12 @@ Align the current app’s look-and-feel to the `/reference-ui` SaaS aesthetic by
 - [ ] 🟥 **Step 7: Page migration (visual only; no data changes)**
   - [ ] 🟨 Apply `PageHeader` + Card-based composition to remaining routes in this order:
     - Login → Settings → Dashboard → Products → Expenses → Sales
-  - [x] 🟩 **Products page completed**:
-    - Header + right action row aligned to screenshot (search + primary CTA)
-    - SaaS table composition/padding/alignment improved
-    - Actions refined with icon buttons
-    - Dialog/form spacing cleaned (`space-y-4`, full-width submit)
+  - [x] 🟩 **Products page redesigned (complete visual rebuild):**
+    - Added utility top header with page title and user info chip
+    - Reworked controls row: search + primary CTA aligned to screenshot
+    - Upgraded table hierarchy/alignment and row affordances
+    - Styled action buttons (`Edit`/`Archive`) as clean dashboard controls
+    - Updated dialog title/copy and preserved full-width submit flow
   - [ ] 🟥 Remaining routes: Login, Settings, Dashboard, Expenses, Sales
   - [ ] 🟨 Ensure every section is inside `Card` and tables/forms use primitives.
 
