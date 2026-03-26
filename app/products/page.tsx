@@ -1,9 +1,9 @@
 'use client';
 
-import { FormEvent, useCallback, useEffect, useState, type ReactNode } from 'react';
+import { FormEvent, useCallback, useEffect, useMemo, useState, type ReactNode } from 'react';
 import { useRouter } from 'next/navigation';
 import { toast } from 'sonner';
-import { Pencil, RefreshCw, Trash2 } from 'lucide-react';
+import { Pencil, Plus, RefreshCw, Search, Trash2 } from 'lucide-react';
 import { formatInrDisplay } from '@/lib/formatInr';
 import { getSupabaseClient } from '@/lib/supabaseClient';
 import type { Product } from '@/lib/types/product';
@@ -68,6 +68,7 @@ export default function ProductsPage() {
   const [saving, setSaving] = useState(false);
   const [dialogOpen, setDialogOpen] = useState(false);
   const [archiveTargetId, setArchiveTargetId] = useState<string | null>(null);
+  const [searchQuery, setSearchQuery] = useState('');
 
   const loadProducts = useCallback(async () => {
     const supabase = getSupabaseClient();
@@ -120,6 +121,17 @@ export default function ProductsPage() {
     if (!businessId) return;
     void loadProducts();
   }, [businessId, loadProducts]);
+
+  const filteredProducts = useMemo(() => {
+    const q = searchQuery.trim().toLowerCase();
+    if (!q) return products;
+    return products.filter((p) => {
+      const inName = p.name.toLowerCase().includes(q);
+      const inCategory = p.category.toLowerCase().includes(q);
+      const inVariant = (p.variant ?? '').toLowerCase().includes(q);
+      return inName || inCategory || inVariant;
+    });
+  }, [products, searchQuery]);
 
   function resetForm() {
     setEditingId(null);
@@ -269,21 +281,29 @@ export default function ProductsPage() {
 
   return (
     <div className="space-y-6">
-      <PageHeader
-        title="Product Repository"
-        description="Master product list for your business."
-        actions={
-          <Button type="button" onClick={openAdd}>
-            Add product
-          </Button>
-        }
-      />
+      <PageHeader title="Product Repository" description="Master list of all products and their category mappings" />
+
+      <div className="flex flex-col justify-end gap-3 sm:flex-row">
+        <div className="relative w-full sm:max-w-sm">
+          <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+          <Input
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+            placeholder="Search products..."
+            className="pl-9"
+          />
+        </div>
+        <Button type="button" onClick={openAdd} className="gap-2 sm:self-start">
+          <Plus className="h-4 w-4" />
+          Add Product
+        </Button>
+      </div>
 
       {error && <p className="text-sm text-destructive">{error}</p>}
 
       <Card>
         <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-          <h3 className="text-base font-semibold">Products</h3>
+          <h3 className="ui-section-title">Products</h3>
           <Button type="button" variant="outline" size="sm" onClick={() => void loadProducts()}>
             <RefreshCw className="mr-1 h-4 w-4" />
             Refresh
@@ -292,14 +312,15 @@ export default function ProductsPage() {
         <CardContent className="pt-0">
           {loading ? (
             <p className="text-sm text-muted-foreground">Loading products…</p>
-          ) : products.length === 0 ? (
+          ) : filteredProducts.length === 0 ? (
             <p className="text-sm text-muted-foreground">No products yet. Add one with Add product or +.</p>
           ) : (
             <Table>
               <TableHeader>
                 <TableRow>
-                  <TableHead>Name</TableHead>
+                  <TableHead>Product Name</TableHead>
                   <TableHead>Category</TableHead>
+                  <TableHead>Variant</TableHead>
                   <TableHead className="text-right">MRP</TableHead>
                   <TableHead className="text-right">Cost</TableHead>
                   <TableHead className="text-right">Margin %</TableHead>
@@ -307,21 +328,25 @@ export default function ProductsPage() {
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {products.map((p) => (
+                {filteredProducts.map((p) => (
                   <TableRow key={p.id}>
-                    <TableCell>
-                      <div className="font-medium text-foreground">{p.name}</div>
-                      {p.variant != null && p.variant !== '' && (
-                        <div className="text-xs text-muted-foreground">{p.variant}</div>
-                      )}
+                    <TableCell className="font-medium text-foreground">
+                      {p.name}
                     </TableCell>
                     <TableCell>
-                      <Badge variant="muted" className="font-semibold">
+                      <Badge variant="neutral" className="font-semibold">
                         {p.category}
                       </Badge>
                     </TableCell>
-                    <TableCell className="text-right tabular-nums">{formatInrDisplay(Number(p.mrp))}</TableCell>
-                    <TableCell className="text-right tabular-nums">{formatInrDisplay(Number(p.cost_price))}</TableCell>
+                    <TableCell className="text-muted-foreground">
+                      {p.variant && p.variant.trim() !== '' ? p.variant : '—'}
+                    </TableCell>
+                    <TableCell className="text-right font-semibold tabular-nums">
+                      {formatInrDisplay(Number(p.mrp))}
+                    </TableCell>
+                    <TableCell className="text-right tabular-nums">
+                      {formatInrDisplay(Number(p.cost_price))}
+                    </TableCell>
                     <TableCell className="text-right tabular-nums text-muted-foreground">
                       {marginPctLabel(p)}
                     </TableCell>
@@ -356,7 +381,7 @@ export default function ProductsPage() {
           )}
         </CardContent>
       </Card>
-
+      {/* Keep FAB for mobile-first quick add. */}
       <Fab aria-label="Add product" onClick={openAdd} />
 
       <Dialog open={dialogOpen} onOpenChange={handleDialogOpenChange}>
@@ -365,7 +390,7 @@ export default function ProductsPage() {
             <DialogTitle>{editingId ? 'Edit product' : 'Add product'}</DialogTitle>
             <DialogDescription>Product name and category are required. Variant is optional.</DialogDescription>
           </DialogHeader>
-          <form onSubmit={(e) => void handleSubmit(e)} className="space-y-3">
+          <form onSubmit={(e) => void handleSubmit(e)} className="space-y-4">
             <div className="grid gap-3 sm:grid-cols-2">
               <Field label="Product name" required>
                 <Input value={formName} onChange={(e) => setFormName(e.target.value)} required />
