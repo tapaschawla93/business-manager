@@ -20,8 +20,6 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
-import { AppShell } from '@/components/layout/AppShell';
-
 type MarginTone = 'good' | 'warn' | 'bad' | 'na';
 
 /** UI margin from MRP & cost (catalog); not stored. */
@@ -274,8 +272,7 @@ export default function ProductsPage() {
   }
 
   return (
-    <AppShell>
-      <div className="space-y-6">
+    <div className="space-y-6">
         <header className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
           <div className="min-w-0">
             <h1 className="text-2xl font-medium tracking-tight text-foreground">Product Repository</h1>
@@ -485,9 +482,8 @@ export default function ProductsPage() {
               </Button>
             </div>
           </DialogContent>
-        </Dialog>
-      </div>
-    </AppShell>
+      </Dialog>
+    </div>
   );
 }
 

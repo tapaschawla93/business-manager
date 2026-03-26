@@ -11,11 +11,14 @@ export type LineDraft = {
   localId: string;
   productId: string | null;
   label: string;
+  categoryPreview: string | null;
   quantity: string;
   salePrice: string;
   /** Preview only — server recomputes from DB at save */
   mrpPreview: number | null;
   costPreview: number | null;
+  /** From inventory table; optional hint only */
+  stockOnHand: number | null;
 };
 
 /**
@@ -50,9 +53,17 @@ export function ProductLineRow({
             <div className="truncate font-semibold text-foreground">
               {line.productId ? line.label : 'Pick a product'}
             </div>
+            {line.productId && line.categoryPreview ? (
+              <div className="mt-0.5 text-xs font-medium text-primary/90">{line.categoryPreview}</div>
+            ) : null}
             {line.productId && mrp != null && cost != null && (
               <div className="mt-0.5 text-xs text-muted-foreground">
                 MRP {formatInrDisplay(mrp)} · Cost {formatInrDisplay(cost)} (preview)
+                {line.stockOnHand != null && Number.isFinite(line.stockOnHand) ? (
+                  <span className="block text-foreground/80">
+                    In stock: {line.stockOnHand} units
+                  </span>
+                ) : null}
               </div>
             )}
           </div>

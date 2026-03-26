@@ -16,6 +16,7 @@ import {
   TrendingUp,
   CircleDollarSign,
   ChartLine,
+  Warehouse,
 } from 'lucide-react';
 import { toast } from 'sonner';
 
@@ -29,6 +30,7 @@ export default function HomePage() {
   const [kpis, setKpis] = useState<{
     total_revenue: number;
     total_expenses: number;
+    inventory_value: number;
     gross_profit: number;
     cash_in_hand: number;
     online_received: number;
@@ -106,50 +108,57 @@ export default function HomePage() {
     <div className="space-y-8">
       <PageHeader
         title="Dashboard"
-        description="All-time metrics for Your business"
+        description="Operating summary: revenue, spend, stock at cost, and net cash position."
       />
 
       {error ? <p className="text-sm text-destructive">{error}</p> : null}
 
       {kpis ? (
         <>
-          <section className="grid grid-cols-2 gap-3 lg:grid-cols-5">
+          <section className="grid grid-cols-2 gap-3 lg:grid-cols-4">
             <KPICard
               icon={<ChartLine className="h-4 w-4" aria-hidden />}
-              label="Total Revenue"
+              label="Total revenue"
               value={formatInrDisplay(kpis.total_revenue)}
-              hint="All time"
+              hint="All-time sales"
               valueClassName="text-finance-positive"
             />
             <KPICard
               icon={<Receipt className="h-4 w-4" aria-hidden />}
-              label="Total Expenses"
+              label="Total expenses"
               value={formatInrDisplay(kpis.total_expenses)}
-              hint="All time"
+              hint="All-time spend"
               valueClassName="text-finance-negative"
             />
             <KPICard
+              icon={<Warehouse className="h-4 w-4" aria-hidden />}
+              label="Inventory value"
+              value={formatInrDisplay(kpis.inventory_value)}
+              hint="Units on hand × catalogue cost"
+              iconClassName="bg-primary/10 text-primary"
+            />
+            <KPICard
+              icon={<Wallet className="h-4 w-4" aria-hidden />}
+              label="Cash in hand"
+              value={formatInrDisplay(kpis.cash_in_hand)}
+              hint="Revenue − expenses (simplified)"
+            />
+          </section>
+
+          <section className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+            <KPICard
               icon={<BarChart3 className="h-4 w-4" aria-hidden />}
-              label="Gross Profit"
+              label="Gross profit"
               value={formatInrDisplay(kpis.gross_profit)}
               hint="Revenue − expenses"
               valueClassName="text-finance-positive"
             />
             <KPICard
-              icon={<Wallet className="h-4 w-4" aria-hidden />}
-              label="Cash in Hand"
-              value={formatInrDisplay(kpis.cash_in_hand)}
-              hint="All time"
-            />
-            <KPICard
               icon={<HandCoins className="h-4 w-4" aria-hidden />}
-              label="Online Received"
+              label="Online received"
               value={formatInrDisplay(kpis.online_received)}
               hint="Online payment sales"
             />
-          </section>
-
-          <section className="grid grid-cols-2 gap-3">
             <KPICard
               icon={<CircleDollarSign className="h-4 w-4" aria-hidden />}
               label="Sales count"

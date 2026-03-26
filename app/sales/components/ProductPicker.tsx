@@ -53,7 +53,7 @@ export function ProductPicker({
               {products.map((p) => (
                 <CommandItem
                   key={p.id}
-                  value={`${p.name} ${p.variant ?? ''}`}
+                  value={`${p.name} ${p.variant ?? ''} ${p.category}`}
                   onSelect={() => {
                     onPick(p);
                     setOpen(false);
@@ -61,6 +61,7 @@ export function ProductPicker({
                 >
                   <span className="font-medium">{p.name}</span>
                   {p.variant ? <span className="text-muted-foreground"> · {p.variant}</span> : null}
+                  <span className="block text-xs text-muted-foreground">{p.category}</span>
                 </CommandItem>
               ))}
             </CommandGroup>

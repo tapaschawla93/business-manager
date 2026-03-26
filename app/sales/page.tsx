@@ -44,7 +44,7 @@ export default function SalesPage() {
       <div>
         <h1 className="text-2xl font-bold tracking-tight text-foreground">New sale</h1>
         <p className="mt-1 text-sm text-muted-foreground">
-          Search product, set quantity and selling price, then save. Server stores snapshots and totals.
+          Pick products to fill category and MRP; enter units and sale price. Saving reduces inventory when stock is tracked.
         </p>
       </div>
       <SalesForm />

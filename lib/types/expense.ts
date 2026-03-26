@@ -4,7 +4,11 @@ export type Expense = {
   business_id: string;
   date: string;
   vendor_name: string;
+  /** Optional linked vendor (see `vendors` table). */
+  vendor_id: string | null;
   item_description: string;
+  /** When set, quantity increases inventory for this product. */
+  product_id: string | null;
   quantity: number;
   unit_cost: number;
   total_amount: number;
@@ -19,7 +23,9 @@ export type ExpenseInsert = {
   business_id: string;
   date: string;
   vendor_name: string;
+  vendor_id?: string | null;
   item_description: string;
+  product_id?: string | null;
   quantity: number;
   unit_cost: number;
   total_amount: number;

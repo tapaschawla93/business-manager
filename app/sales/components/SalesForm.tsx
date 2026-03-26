@@ -14,6 +14,7 @@ import { Card, CardContent } from '@/components/ui/card';
 import { Separator } from '@/components/ui/separator';
 import { ProductPicker } from './ProductPicker';
 import { ProductLineRow, type LineDraft } from './ProductLineRow';
+import { fetchStockByProductId } from '@/lib/queries/inventory';
 
 function newLocalId(): string {
   return `${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
@@ -32,10 +33,12 @@ function emptyLine(): LineDraft {
     localId: newLocalId(),
     productId: null,
     label: '',
+    categoryPreview: null,
     quantity: '1',
     salePrice: '',
     mrpPreview: null,
     costPreview: null,
+    stockOnHand: null,
   };
 }
 
@@ -85,6 +88,7 @@ export function SalesForm() {
   const [paymentMode, setPaymentMode] = useState<'cash' | 'online'>('cash');
   const [notes, setNotes] = useState('');
   const [lines, setLines] = useState<LineDraft[]>([emptyLine()]);
+  const [stockByProduct, setStockByProduct] = useState<Record<string, number>>({});
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -107,6 +111,26 @@ export function SalesForm() {
   useEffect(() => {
     void loadProducts();
   }, [loadProducts]);
+
+  const refreshStock = useCallback(async () => {
+    const supabase = getSupabaseClient();
+    const { data, error: err } = await fetchStockByProductId(supabase);
+    if (!err && data) setStockByProduct(data);
+  }, []);
+
+  useEffect(() => {
+    void refreshStock();
+  }, [refreshStock]);
+
+  useEffect(() => {
+    setLines((prev) =>
+      prev.map((l) => {
+        if (!l.productId) return { ...l, stockOnHand: null };
+        const v = stockByProduct[l.productId];
+        return { ...l, stockOnHand: v !== undefined ? v : 0 };
+      }),
+    );
+  }, [stockByProduct]);
 
   const previewTotals = useMemo(() => {
     let amount = 0;
@@ -144,6 +168,7 @@ export function SalesForm() {
   }
 
   function onPickProduct(localId: string, p: Product) {
+    const onHand = stockByProduct[p.id];
     setLines((prev) =>
       prev.map((l) =>
         l.localId === localId
@@ -151,9 +176,11 @@ export function SalesForm() {
               ...l,
               productId: p.id,
               label: p.name + (p.variant ? ` (${p.variant})` : ''),
+              categoryPreview: p.category,
               salePrice: String(p.mrp),
               mrpPreview: Number(p.mrp),
               costPreview: Number(p.cost_price),
+              stockOnHand: onHand !== undefined ? onHand : null,
             }
           : l,
       ),
@@ -217,6 +244,7 @@ export function SalesForm() {
     setNotes('');
     setLines([emptyLine()]);
     void loadProducts();
+    void refreshStock();
   }
 
   return (

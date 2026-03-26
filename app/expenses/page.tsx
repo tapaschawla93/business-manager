@@ -144,7 +144,7 @@ export default function ExpensesPage() {
     <div className="space-y-6">
       <PageHeader
         title="Expenses"
-        description="Record purchases and operating costs. Total is quantity × unit cost."
+        description="Record spend; link a product to add units to inventory. Total is quantity × unit cost."
         actions={
           <Button type="button" onClick={openNew}>
             New expense

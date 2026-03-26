@@ -3,6 +3,8 @@ import type { SupabaseClient } from '@supabase/supabase-js';
 export type DashboardKPIs = {
   total_revenue: number;
   total_expenses: number;
+  /** qty_on_hand × catalog cost_price */
+  inventory_value: number;
   gross_profit: number;
   cash_in_hand: number;
   online_received: number;
@@ -86,6 +88,7 @@ export async function getDashboardKPIs(
   const r = row as Record<string, unknown>;
   const total_revenue = asFiniteNumber(r.total_revenue);
   const total_expenses = asFiniteNumber(r.total_expenses);
+  const inventory_value = asFiniteNumber(r.inventory_value);
   const gross_profit = asFiniteNumber(r.gross_profit);
   const cash_in_hand = asFiniteNumber(r.cash_in_hand);
   const online_received = asFiniteNumber(r.online_received);
@@ -95,6 +98,7 @@ export async function getDashboardKPIs(
   if (
     total_revenue === null ||
     total_expenses === null ||
+    inventory_value === null ||
     gross_profit === null ||
     cash_in_hand === null ||
     online_received === null ||
@@ -108,6 +112,7 @@ export async function getDashboardKPIs(
     data: {
       total_revenue,
       total_expenses,
+      inventory_value,
       gross_profit,
       cash_in_hand,
       online_received,

@@ -53,6 +53,7 @@ export function ExpenseList({
                 <TableHead>Date</TableHead>
                 <TableHead>Vendor</TableHead>
                 <TableHead>Item</TableHead>
+                <TableHead className="w-[88px]">Stock</TableHead>
                 <TableHead className="text-right">Qty</TableHead>
                 <TableHead className="text-right">Amount</TableHead>
                 <TableHead>Payment</TableHead>
@@ -67,6 +68,13 @@ export function ExpenseList({
                   </TableCell>
                   <TableCell className="font-medium">{row.vendor_name}</TableCell>
                   <TableCell className="max-w-[140px] truncate">{row.item_description}</TableCell>
+                  <TableCell>
+                    {row.product_id ? (
+                      <Badge variant="secondary" className="whitespace-nowrap text-[10px] font-medium">
+                        Stock in
+                      </Badge>
+                    ) : null}
+                  </TableCell>
                   <TableCell className="text-right tabular-nums">{row.quantity}</TableCell>
                   <TableCell className="text-right font-medium tabular-nums">
                     {formatInrDisplay(Number(row.total_amount))}

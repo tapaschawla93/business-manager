@@ -6,8 +6,8 @@ import './globals.css';
 const inter = Inter({ subsets: ['latin'], display: 'swap' });
 
 export const metadata = {
-  title: 'BizManager',
-  description: 'Multi-tenant business operations',
+  title: 'BizManager — Business OS',
+  description: 'Sales, inventory, expenses, and vendor operations in one workspace.',
 };
 
 export default function RootLayout({ children }: { children: ReactNode }) {
