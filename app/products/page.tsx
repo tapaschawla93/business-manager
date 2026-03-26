@@ -31,6 +31,7 @@ import {
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog';
 import { Fab } from '@/components/Fab';
+import { PageHeader } from '@/components/PageHeader';
 
 /** UI margin from MRP & cost (catalog); not stored. */
 function marginPctLabel(p: Product): string {
@@ -268,22 +269,22 @@ export default function ProductsPage() {
 
   return (
     <div className="space-y-6">
-      <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-        <div>
-          <h1 className="text-2xl font-bold tracking-tight text-foreground">Product Repository</h1>
-          <p className="mt-1 text-sm text-muted-foreground">Master product list for your business.</p>
-        </div>
-        <Button type="button" className="h-11 rounded-[10px] px-5 font-semibold sm:shrink-0" onClick={openAdd}>
-          Add product
-        </Button>
-      </div>
+      <PageHeader
+        title="Product Repository"
+        description="Master product list for your business."
+        actions={
+          <Button type="button" onClick={openAdd}>
+            Add product
+          </Button>
+        }
+      />
 
       {error && <p className="text-sm text-destructive">{error}</p>}
 
-      <Card className="rounded-xl border-border shadow-sm">
+      <Card>
         <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
           <h3 className="text-base font-semibold">Products</h3>
-          <Button type="button" variant="outline" size="sm" className="rounded-[10px]" onClick={() => void loadProducts()}>
+          <Button type="button" variant="outline" size="sm" onClick={() => void loadProducts()}>
             <RefreshCw className="mr-1 h-4 w-4" />
             Refresh
           </Button>
@@ -330,7 +331,7 @@ export default function ProductsPage() {
                           type="button"
                           variant="ghost"
                           size="icon"
-                          className="h-9 w-9 rounded-[10px]"
+                          className="h-9 w-9"
                           aria-label="Edit"
                           onClick={() => startEdit(p)}
                         >
@@ -340,7 +341,7 @@ export default function ProductsPage() {
                           type="button"
                           variant="ghost"
                           size="icon"
-                          className="h-9 w-9 rounded-[10px] text-muted-foreground hover:text-destructive"
+                          className="h-9 w-9 text-muted-foreground hover:text-destructive"
                           aria-label="Archive"
                           onClick={() => setArchiveTargetId(p.id)}
                         >
@@ -359,7 +360,7 @@ export default function ProductsPage() {
       <Fab aria-label="Add product" onClick={openAdd} />
 
       <Dialog open={dialogOpen} onOpenChange={handleDialogOpenChange}>
-        <DialogContent className="max-h-[min(90vh,720px)] overflow-y-auto rounded-xl sm:max-w-lg">
+        <DialogContent className="max-h-[min(90vh,720px)] overflow-y-auto sm:max-w-lg">
           <DialogHeader>
             <DialogTitle>{editingId ? 'Edit product' : 'Add product'}</DialogTitle>
             <DialogDescription>Product name and category are required. Variant is optional.</DialogDescription>
@@ -417,7 +418,7 @@ export default function ProductsPage() {
                 />
               </Field>
             </div>
-            <Button type="submit" disabled={saving} className="mt-2 h-12 w-full rounded-[10px] text-base font-semibold">
+            <Button type="submit" size="full" disabled={saving} className="mt-2">
               {saving ? 'Saving…' : editingId ? 'Save changes' : 'Save product'}
             </Button>
           </form>
@@ -425,7 +426,7 @@ export default function ProductsPage() {
       </Dialog>
 
       <AlertDialog open={archiveTargetId !== null} onOpenChange={(o) => !o && setArchiveTargetId(null)}>
-        <AlertDialogContent className="rounded-xl">
+        <AlertDialogContent>
           <AlertDialogHeader>
             <AlertDialogTitle>Archive product?</AlertDialogTitle>
             <AlertDialogDescription>
@@ -433,9 +434,9 @@ export default function ProductsPage() {
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
-            <AlertDialogCancel className="rounded-[10px]">Cancel</AlertDialogCancel>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
             <AlertDialogAction
-              className="rounded-[10px] bg-destructive text-destructive-foreground hover:bg-destructive/90"
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
               onClick={() => void confirmArchive()}
             >
               Archive

@@ -43,7 +43,7 @@ export function ProductLineRow({
       : null;
 
   return (
-    <Card className={cn('rounded-xl border-border bg-muted/30 shadow-none')}>
+    <Card className={cn('bg-muted/30 shadow-none')}>
       <CardContent className="space-y-3 p-3">
         <div className="flex items-start justify-between gap-2">
           <div className="min-w-0 text-sm">

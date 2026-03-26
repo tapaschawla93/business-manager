@@ -33,10 +33,10 @@ export function ExpenseList({
   onRefresh: () => void;
 }) {
   return (
-    <Card className="rounded-xl border-border shadow-sm">
+    <Card>
       <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
         <h3 className="text-base font-semibold">All expenses</h3>
-        <Button type="button" variant="outline" size="sm" className="rounded-[10px]" onClick={onRefresh}>
+        <Button type="button" variant="outline" size="sm" onClick={onRefresh}>
           <RefreshCw className="mr-1 h-4 w-4" />
           Refresh
         </Button>
@@ -82,7 +82,7 @@ export function ExpenseList({
                         type="button"
                         variant="ghost"
                         size="icon"
-                        className="h-9 w-9 rounded-[10px]"
+                        className="h-9 w-9"
                         aria-label="Edit"
                         onClick={() => onEdit(row)}
                       >
@@ -92,7 +92,7 @@ export function ExpenseList({
                         type="button"
                         variant="ghost"
                         size="icon"
-                        className="h-9 w-9 rounded-[10px] text-muted-foreground hover:text-destructive"
+                        className="h-9 w-9 text-muted-foreground hover:text-destructive"
                         aria-label="Archive"
                         onClick={() => onArchive(row.id)}
                       >

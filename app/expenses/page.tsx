@@ -27,6 +27,7 @@ import {
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog';
 import { Fab } from '@/components/Fab';
+import { PageHeader } from '@/components/PageHeader';
 
 export default function ExpensesPage() {
   const router = useRouter();
@@ -141,17 +142,15 @@ export default function ExpensesPage() {
 
   return (
     <div className="space-y-6">
-      <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-        <div>
-          <h1 className="text-2xl font-bold tracking-tight text-foreground">Expenses</h1>
-          <p className="mt-1 text-sm text-muted-foreground">
-            Record purchases and operating costs. Total is quantity × unit cost.
-          </p>
-        </div>
-        <Button type="button" className="h-11 rounded-[10px] px-5 font-semibold sm:shrink-0" onClick={openNew}>
-          New expense
-        </Button>
-      </div>
+      <PageHeader
+        title="Expenses"
+        description="Record purchases and operating costs. Total is quantity × unit cost."
+        actions={
+          <Button type="button" onClick={openNew}>
+            New expense
+          </Button>
+        }
+      />
 
       {error && <p className="text-sm text-destructive">{error}</p>}
 
@@ -166,7 +165,7 @@ export default function ExpensesPage() {
       <Fab aria-label="New expense" onClick={openNew} />
 
       <Dialog open={dialogOpen} onOpenChange={handleDialogOpenChange}>
-        <DialogContent className="max-h-[min(90vh,720px)] overflow-y-auto rounded-xl sm:max-w-lg">
+        <DialogContent className="max-h-[min(90vh,720px)] overflow-y-auto sm:max-w-lg">
           <DialogHeader>
             <DialogTitle>{editing ? 'Edit expense' : 'New expense'}</DialogTitle>
             <DialogDescription>
@@ -190,7 +189,7 @@ export default function ExpensesPage() {
       </Dialog>
 
       <AlertDialog open={archiveTargetId !== null} onOpenChange={(o) => !o && setArchiveTargetId(null)}>
-        <AlertDialogContent className="rounded-xl">
+        <AlertDialogContent>
           <AlertDialogHeader>
             <AlertDialogTitle>Archive expense?</AlertDialogTitle>
             <AlertDialogDescription>
@@ -198,9 +197,9 @@ export default function ExpensesPage() {
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
-            <AlertDialogCancel className="rounded-[10px]">Cancel</AlertDialogCancel>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
             <AlertDialogAction
-              className="rounded-[10px] bg-destructive text-destructive-foreground hover:bg-destructive/90"
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
               onClick={() => void confirmArchive()}
             >
               Archive

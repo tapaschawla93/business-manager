@@ -101,7 +101,7 @@ export default function LoginPage() {
 
   return (
     <div className="flex min-h-screen items-center justify-center px-4 py-10">
-      <Card className="w-full max-w-sm rounded-xl border-border shadow-md">
+      <Card className="w-full max-w-sm shadow-md">
         <CardHeader className="space-y-1">
           <CardTitle className="text-xl">{mode === 'sign-in' ? 'Sign in' : 'Create account'}</CardTitle>
           <CardDescription>
@@ -151,7 +151,7 @@ export default function LoginPage() {
             {info && <p className="text-xs text-muted-foreground">{info}</p>}
             {error && <p className="text-xs text-destructive">{error}</p>}
 
-            <Button type="submit" disabled={loading} className="h-11 w-full rounded-[10px] text-base font-semibold">
+            <Button type="submit" size="full" disabled={loading}>
               {loading
                 ? mode === 'sign-in'
                   ? 'Signing in…'
@@ -166,24 +166,28 @@ export default function LoginPage() {
             {mode === 'sign-in' ? (
               <>
                 Don&apos;t have an account?{' '}
-                <button
+                <Button
                   type="button"
+                  variant="link"
+                  size="sm"
                   onClick={() => setMode('sign-up')}
-                  className="font-semibold text-primary underline-offset-2 hover:underline"
+                  className="h-auto px-0 py-0 text-xs"
                 >
                   Create one
-                </button>
+                </Button>
               </>
             ) : (
               <>
                 Already have an account?{' '}
-                <button
+                <Button
                   type="button"
+                  variant="link"
+                  size="sm"
                   onClick={() => setMode('sign-in')}
-                  className="font-semibold text-primary underline-offset-2 hover:underline"
+                  className="h-auto px-0 py-0 text-xs"
                 >
                   Sign in
-                </button>
+                </Button>
               </>
             )}
           </div>

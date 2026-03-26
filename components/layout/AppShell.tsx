@@ -102,7 +102,7 @@ export function AppShell({ children }: { children: ReactNode }) {
       </aside>
 
       <main className="min-h-screen md:pl-[var(--sidebar-width)]">
-        <div className="mx-auto max-w-6xl px-[var(--main-padding-x)] pb-[var(--main-bottom-mobile)] pt-6 md:px-[var(--main-padding-x-md)] md:pb-[var(--main-bottom-desktop)]">
+        <div className="mx-auto max-w-7xl px-[var(--main-padding-x)] pb-[var(--main-bottom-mobile)] py-6 md:px-[var(--main-padding-x-md)] md:pb-[var(--main-bottom-desktop)] md:py-6">
           {children}
         </div>
       </main>

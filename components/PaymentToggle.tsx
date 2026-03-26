@@ -1,6 +1,7 @@
 'use client';
 
 import { cn } from '@/lib/utils';
+import { Button } from '@/components/ui/button';
 
 type PaymentMode = 'cash' | 'online';
 
@@ -17,19 +18,15 @@ export function PaymentToggle({
   return (
     <div className="flex gap-2">
       {(['cash', 'online'] as const).map((m) => (
-        <button
+        <Button
           key={m}
           type="button"
           onClick={() => onChange(m)}
-          className={cn(
-            'flex h-10 min-h-10 flex-1 items-center justify-center rounded-lg text-sm font-semibold transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2',
-            value === m
-              ? 'bg-primary text-primary-foreground shadow-sm'
-              : 'border border-input bg-background text-foreground hover:bg-muted',
-          )}
+          variant={value === m ? 'default' : 'outline'}
+          className={cn('h-10 flex-1 justify-center', value === m ? 'shadow-sm' : 'bg-background')}
         >
           {m === 'cash' ? 'Cash' : 'Online'}
-        </button>
+        </Button>
       ))}
     </div>
   );

@@ -8,6 +8,7 @@ import { downloadCsv, rowsToCsv } from '@/lib/exportCsv';
 import { getSupabaseClient } from '@/lib/supabaseClient';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
+import { PageHeader } from '@/components/PageHeader';
 
 /**
  * Export active tenant data only (deleted_at IS NULL). Client-side CSV; no server.
@@ -140,12 +141,12 @@ export default function SettingsPage() {
 
   return (
     <div className="mx-auto max-w-lg space-y-6">
-      <div>
-        <h1 className="text-2xl font-bold tracking-tight text-foreground">Settings</h1>
-        <p className="mt-1 text-sm text-muted-foreground">Export your business data as CSV (active records only).</p>
-      </div>
+      <PageHeader
+        title="Settings"
+        description="Export your business data as CSV (active records only)."
+      />
 
-      <Card className="rounded-xl border-border shadow-sm">
+      <Card>
         <CardHeader>
           <CardTitle className="text-lg">Export data</CardTitle>
           <CardDescription>Each button downloads one file. Exports respect row-level security.</CardDescription>
@@ -154,7 +155,7 @@ export default function SettingsPage() {
           <Button
             type="button"
             variant="outline"
-            className="h-12 justify-between rounded-[10px] px-4 font-medium"
+            className="h-12 justify-between px-4 font-medium"
             disabled={busy !== null}
             onClick={() => void exportProducts()}
           >
@@ -164,7 +165,7 @@ export default function SettingsPage() {
           <Button
             type="button"
             variant="outline"
-            className="h-12 justify-between rounded-[10px] px-4 font-medium"
+            className="h-12 justify-between px-4 font-medium"
             disabled={busy !== null}
             onClick={() => void exportSales()}
           >
@@ -174,7 +175,7 @@ export default function SettingsPage() {
           <Button
             type="button"
             variant="outline"
-            className="h-12 justify-between rounded-[10px] px-4 font-medium"
+            className="h-12 justify-between px-4 font-medium"
             disabled={busy !== null}
             onClick={() => void exportSaleItems()}
           >
@@ -184,7 +185,7 @@ export default function SettingsPage() {
           <Button
             type="button"
             variant="outline"
-            className="h-12 justify-between rounded-[10px] px-4 font-medium"
+            className="h-12 justify-between px-4 font-medium"
             disabled={busy !== null}
             onClick={() => void exportExpenses()}
           >

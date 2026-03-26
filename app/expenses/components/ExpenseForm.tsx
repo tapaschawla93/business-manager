@@ -183,7 +183,7 @@ export function ExpenseForm({
 
   return (
     <form onSubmit={(e) => void handleSubmit(e)} className="space-y-4">
-      <Card className="rounded-xl border-0 shadow-none">
+      <Card className="border-0 shadow-none">
         <CardContent className="space-y-3 p-0">
           <div className="grid gap-3 sm:grid-cols-2">
             <Field label="Date & time" required>
@@ -224,7 +224,7 @@ export function ExpenseForm({
             </Field>
             <div className="space-y-1">
               <Label className="text-xs">Total</Label>
-              <div className="flex h-10 items-center rounded-[10px] border border-input bg-muted/40 px-3 text-sm font-semibold text-primary">
+              <div className="flex h-10 items-center rounded-lg border border-input bg-muted/40 px-3 text-sm font-semibold text-primary">
                 {totalPreview == null ? '—' : formatInrDisplay(totalPreview)}
               </div>
             </div>
@@ -241,11 +241,11 @@ export function ExpenseForm({
       {error && <p className="text-sm text-destructive">{error}</p>}
       <div className="flex flex-col gap-2">
         {editing && (
-          <Button type="button" variant="outline" className="h-11 rounded-[10px]" onClick={onDiscardEdit}>
+          <Button type="button" variant="outline" className="h-11" onClick={onDiscardEdit}>
             Cancel
           </Button>
         )}
-        <Button type="submit" disabled={saving} className="h-12 w-full rounded-[10px] text-base font-semibold">
+        <Button type="submit" size="full" disabled={saving}>
           {saving ? 'Saving…' : editing ? 'Save changes' : 'Save expense'}
         </Button>
       </div>

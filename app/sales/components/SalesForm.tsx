@@ -221,7 +221,7 @@ export function SalesForm() {
 
   return (
     <form onSubmit={handleSubmit} className="mx-auto max-w-lg space-y-5">
-      <Card className="rounded-xl border-border shadow-sm">
+      <Card>
         <CardContent className="space-y-4 p-4">
           <div className="grid gap-3">
             <div className="space-y-1">
@@ -261,12 +261,7 @@ export function SalesForm() {
                 {idx < lines.length - 1 && <Separator className="my-3" />}
               </div>
             ))}
-            <Button
-              type="button"
-              variant="outline"
-              className="mt-3 w-full rounded-[10px] border-dashed"
-              onClick={addLine}
-            >
+            <Button type="button" variant="outline" className="mt-3 w-full border-dashed" onClick={addLine}>
               + Add more products
             </Button>
           </>
@@ -278,7 +273,7 @@ export function SalesForm() {
         <Textarea value={notes} onChange={(e) => setNotes(e.target.value)} rows={2} />
       </div>
 
-      <Card className="rounded-xl border-primary/20 bg-accent/40 shadow-none">
+      <Card className="border-primary/20 bg-accent/40 shadow-none">
         <CardContent className="p-4 text-sm">
           <p className="font-semibold text-foreground">Preview totals (browser)</p>
           <p className="mt-1 text-muted-foreground">Amount {formatInrDisplay(previewTotals.totalAmount)}</p>
@@ -289,11 +284,7 @@ export function SalesForm() {
 
       {error && <p className="text-sm text-destructive">{error}</p>}
 
-      <Button
-        type="submit"
-        disabled={saving || loadingProducts}
-        className="h-12 w-full rounded-[10px] text-base font-semibold"
-      >
+      <Button type="submit" size="full" disabled={saving || loadingProducts}>
         {saving ? 'Saving…' : 'Save sale'}
       </Button>
     </form>
