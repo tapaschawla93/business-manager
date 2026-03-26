@@ -3,7 +3,7 @@
 import { FormEvent, useCallback, useEffect, useMemo, useState, type ReactNode } from 'react';
 import { useRouter } from 'next/navigation';
 import { toast } from 'sonner';
-import { Pencil, Plus, RefreshCw, Search, Trash2, Boxes, ChevronRight } from 'lucide-react';
+import { Pencil, Plus, RefreshCw, Search, Trash2, Package2 } from 'lucide-react';
 import { formatInrDisplay } from '@/lib/formatInr';
 import { getSupabaseClient } from '@/lib/supabaseClient';
 import type { Product } from '@/lib/types/product';
@@ -20,27 +20,19 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
-import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-} from '@/components/ui/alert-dialog';
-import { Fab } from '@/components/Fab';
-import { PageHeader } from '@/components/PageHeader';
+import { AppShell } from '@/components/layout/AppShell';
+
+type MarginTone = 'good' | 'warn' | 'bad' | 'na';
 
 /** UI margin from MRP & cost (catalog); not stored. */
-function marginPctLabel(p: Product): string {
+function getMargin(p: Product): { label: string; tone: MarginTone } {
   const cost = Number(p.cost_price);
-  if (!Number.isFinite(cost) || cost <= 0) return '—';
+  if (!Number.isFinite(cost) || cost <= 0) return { label: '—', tone: 'na' };
   const mrp = Number(p.mrp);
-  if (!Number.isFinite(mrp)) return '—';
+  if (!Number.isFinite(mrp)) return { label: '—', tone: 'na' };
   const pct = ((mrp - cost) / cost) * 100;
-  return `${pct.toFixed(1)}%`;
+  const tone: MarginTone = pct > 30 ? 'good' : pct >= 10 ? 'warn' : 'bad';
+  return { label: `${pct.toFixed(1)}%`, tone };
 }
 
 /**
@@ -282,234 +274,220 @@ export default function ProductsPage() {
   }
 
   return (
-    <div className="space-y-6">
-      <section className="rounded-card border border-border bg-card p-4 shadow-sm sm:p-5">
-        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+    <AppShell>
+      <div className="space-y-6">
+        <header className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
           <div className="min-w-0">
-            <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-              <Boxes className="h-4 w-4" />
-              Product Management
-            </div>
-            <h1 className="mt-1 text-2xl font-semibold tracking-tight text-foreground">Products</h1>
+            <h1 className="text-2xl font-medium tracking-tight text-foreground">Product Repository</h1>
+            <p className="mt-1 text-sm text-muted-foreground">Manage your product catalogue</p>
           </div>
-          <div className="flex items-center gap-3 rounded-full border border-border bg-muted/50 px-3 py-1.5">
-            <div className="flex h-8 w-8 items-center justify-center rounded-full bg-primary/15 text-xs font-semibold text-primary">
-              {(userEmail?.slice(0, 2) ?? 'OW').toUpperCase()}
-            </div>
-            <div className="min-w-0">
-              <p className="truncate text-sm font-medium text-foreground" title={userEmail ?? undefined}>
-                {userEmail ?? 'Owner'}
-              </p>
-              <p className="text-xs text-muted-foreground">Owner</p>
-            </div>
+          <Button type="button" onClick={openAdd} className="gap-2 sm:self-start">
+            <Plus className="h-4 w-4" />
+            Add Product
+          </Button>
+        </header>
+
+        <div className="flex flex-col justify-end gap-3 sm:flex-row sm:items-center sm:justify-between">
+          <div className="relative w-full sm:max-w-sm">
+            <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+            <Input
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              placeholder="Search products..."
+              className="pl-9"
+            />
           </div>
+          <Button type="button" variant="outline" size="sm" onClick={() => void loadProducts()} className="gap-2">
+            <RefreshCw className="h-4 w-4" />
+            Refresh
+          </Button>
         </div>
-      </section>
 
-      <PageHeader
-        title="Product Repository"
-        description="Master list of all products and their category mappings"
-      />
+        {error && <p className="text-sm text-destructive">{error}</p>}
 
-      <div className="flex flex-col justify-end gap-3 sm:flex-row">
-        <div className="relative w-full sm:max-w-sm">
-          <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-          <Input
-            value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
-            placeholder="Search products..."
-            className="pl-9"
-          />
-        </div>
-        <Button type="button" onClick={openAdd} className="gap-2 sm:self-start">
-          <Plus className="h-4 w-4" />
-          Add Product
-        </Button>
-      </div>
-
-      {error && <p className="text-sm text-destructive">{error}</p>}
-
-      <Card>
-        <CardHeader className="pb-2">
-          <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-            <div>
-              <h3 className="ui-section-title">All Products</h3>
-              <p className="mt-1 text-sm text-muted-foreground">
-                Browse and manage your product catalog.
-              </p>
-            </div>
-            <Button type="button" variant="outline" size="sm" onClick={() => void loadProducts()}>
-              <RefreshCw className="mr-1 h-4 w-4" />
-              Refresh
-            </Button>
-          </div>
-        </CardHeader>
-        <CardContent className="pt-0">
-          {loading ? (
-            <p className="text-sm text-muted-foreground">Loading products…</p>
-          ) : filteredProducts.length === 0 ? (
-            <p className="text-sm text-muted-foreground">No products yet. Add one with Add product or +.</p>
-          ) : (
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>Product Name</TableHead>
-                  <TableHead>Category</TableHead>
-                  <TableHead>Variant</TableHead>
-                  <TableHead className="text-right">MRP</TableHead>
-                  <TableHead className="text-right">Cost</TableHead>
-                  <TableHead className="text-right">Margin %</TableHead>
-                  <TableHead className="text-right w-[100px]">Actions</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {filteredProducts.map((p) => (
-                  <TableRow key={p.id}>
-                    <TableCell className="font-medium text-foreground">
-                      <div className="flex items-center gap-2">
-                        <span>{p.name}</span>
-                        <ChevronRight className="h-3.5 w-3.5 text-muted-foreground" />
-                      </div>
-                    </TableCell>
-                    <TableCell>
-                      <Badge variant="neutral" className="font-semibold">
-                        {p.category}
-                      </Badge>
-                    </TableCell>
-                    <TableCell className="text-muted-foreground">
-                      {p.variant && p.variant.trim() !== '' ? p.variant : '—'}
-                    </TableCell>
-                    <TableCell className="text-right font-semibold tabular-nums">
-                      {formatInrDisplay(Number(p.mrp))}
-                    </TableCell>
-                    <TableCell className="text-right tabular-nums">
-                      {formatInrDisplay(Number(p.cost_price))}
-                    </TableCell>
-                    <TableCell className="text-right tabular-nums text-muted-foreground">
-                      {marginPctLabel(p)}
-                    </TableCell>
-                    <TableCell className="text-right">
-                      <div className="flex justify-end gap-1">
-                        <Button
-                          type="button"
-                          variant="outline"
-                          size="icon"
-                          className="h-9 w-9"
-                          aria-label="Edit"
-                          onClick={() => startEdit(p)}
-                        >
-                          <Pencil className="h-4 w-4" />
-                        </Button>
-                        <Button
-                          type="button"
-                          variant="outline"
-                          size="icon"
-                          className="h-9 w-9 border-destructive/30 text-destructive hover:bg-destructive/10"
-                          aria-label="Archive"
-                          onClick={() => setArchiveTargetId(p.id)}
-                        >
-                          <Trash2 className="h-4 w-4" />
-                        </Button>
-                      </div>
-                    </TableCell>
+        <Card>
+          <CardHeader className="pb-2">
+            <h2 className="ui-section-title">Products</h2>
+          </CardHeader>
+          <CardContent className="pt-0">
+            {loading ? (
+              <p className="text-sm text-muted-foreground">Loading products…</p>
+            ) : products.length === 0 ? (
+              <div className="flex min-h-[320px] flex-col items-center justify-center gap-4 text-center">
+                <div className="flex h-14 w-14 items-center justify-center rounded-full bg-muted">
+                  <Package2 className="h-7 w-7 text-muted-foreground" />
+                </div>
+                <div>
+                  <p className="text-base font-semibold text-foreground">No products yet</p>
+                  <p className="mt-1 text-sm text-muted-foreground">Add your first product</p>
+                </div>
+                <Button type="button" onClick={openAdd} className="gap-2">
+                  <Plus className="h-4 w-4" />
+                  Add your first product
+                </Button>
+              </div>
+            ) : filteredProducts.length === 0 ? (
+              <div className="flex min-h-[240px] flex-col items-center justify-center gap-2 text-center">
+                <p className="text-sm font-medium text-foreground">No matching products</p>
+                <p className="text-sm text-muted-foreground">Try a different search term.</p>
+              </div>
+            ) : (
+              <Table>
+                <TableHeader>
+                  <TableRow className="hover:bg-transparent">
+                    <TableHead>Name</TableHead>
+                    <TableHead>Category</TableHead>
+                    <TableHead className="text-right">MRP</TableHead>
+                    <TableHead className="text-right">Cost</TableHead>
+                    <TableHead className="text-right">Margin%</TableHead>
+                    <TableHead className="text-right w-[110px]">Actions</TableHead>
                   </TableRow>
-                ))}
-              </TableBody>
-            </Table>
-          )}
-        </CardContent>
-      </Card>
-      {/* Keep FAB for mobile-first quick add. */}
-      <Fab aria-label="Add product" onClick={openAdd} />
+                </TableHeader>
+                <TableBody>
+                  {filteredProducts.map((p) => {
+                    const m = getMargin(p);
+                    const marginClass =
+                      m.tone === 'good'
+                        ? 'text-finance-positive'
+                        : m.tone === 'warn'
+                          ? 'text-amber-600'
+                          : m.tone === 'bad'
+                            ? 'text-finance-negative'
+                            : 'text-muted-foreground';
 
-      <Dialog open={dialogOpen} onOpenChange={handleDialogOpenChange}>
-        <DialogContent className="max-h-[min(90vh,720px)] overflow-y-auto sm:max-w-lg">
-          <DialogHeader>
-            <DialogTitle>{editingId ? 'Edit Product in Repository' : 'Add New Product to Repository'}</DialogTitle>
-            <DialogDescription>
-              Product name and category are required. Variant is optional.
-            </DialogDescription>
-          </DialogHeader>
-          <form onSubmit={(e) => void handleSubmit(e)} className="space-y-4">
-            <div className="grid gap-3 sm:grid-cols-2">
-              <Field label="Product name" required>
-                <Input value={formName} onChange={(e) => setFormName(e.target.value)} required />
-              </Field>
-              <Field label="Variant (optional)">
-                <Input
-                  value={formVariant}
-                  onChange={(e) => setFormVariant(e.target.value)}
-                  placeholder="e.g. 500 ml"
-                />
-              </Field>
-              <Field label="Category" required>
-                <Input value={formCategory} onChange={(e) => setFormCategory(e.target.value)} required />
-              </Field>
-              <Field label="MRP" required>
-                <Input
-                  type="number"
-                  inputMode="decimal"
-                  min={0}
-                  step="0.01"
-                  value={formMrp}
-                  onChange={(e) => setFormMrp(e.target.value)}
-                  required
-                />
-              </Field>
-              <Field label="Cost price" required>
-                <Input
-                  type="number"
-                  inputMode="decimal"
-                  min={0}
-                  step="0.01"
-                  value={formCost}
-                  onChange={(e) => setFormCost(e.target.value)}
-                  required
-                />
-              </Field>
-              <Field label="HSN (optional)">
-                <Input value={formHsn} onChange={(e) => setFormHsn(e.target.value)} />
-              </Field>
-              <Field label="Tax % (optional)">
-                <Input
-                  type="number"
-                  inputMode="decimal"
-                  min={0}
-                  max={100}
-                  step="0.01"
-                  value={formTax}
-                  onChange={(e) => setFormTax(e.target.value)}
-                  placeholder="0–100"
-                />
-              </Field>
+                    return (
+                      <TableRow key={p.id} className="hover:bg-muted/40">
+                        <TableCell className="font-medium text-foreground">{p.name}</TableCell>
+                        <TableCell>
+                          <Badge variant="secondary" className="font-medium">
+                            {p.category}
+                          </Badge>
+                        </TableCell>
+                        <TableCell className="text-right font-semibold tabular-nums">
+                          {formatInrDisplay(Number(p.mrp))}
+                        </TableCell>
+                        <TableCell className="text-right tabular-nums">
+                          {formatInrDisplay(Number(p.cost_price))}
+                        </TableCell>
+                        <TableCell className={`text-right font-semibold tabular-nums ${marginClass}`}>
+                          {m.label}
+                        </TableCell>
+                        <TableCell className="text-right">
+                          <div className="flex justify-end gap-2">
+                            <Button
+                              type="button"
+                              variant="ghost"
+                              size="icon"
+                              className="h-9 w-9"
+                              aria-label="Edit"
+                              onClick={() => startEdit(p)}
+                            >
+                              <Pencil className="h-4 w-4" />
+                            </Button>
+                            <Button
+                              type="button"
+                              variant="ghost"
+                              size="icon"
+                              className="h-9 w-9 text-muted-foreground hover:text-destructive"
+                              aria-label="Archive"
+                              onClick={() => setArchiveTargetId(p.id)}
+                            >
+                              <Trash2 className="h-4 w-4" />
+                            </Button>
+                          </div>
+                        </TableCell>
+                      </TableRow>
+                    );
+                  })}
+                </TableBody>
+              </Table>
+            )}
+          </CardContent>
+        </Card>
+
+        <Dialog open={dialogOpen} onOpenChange={handleDialogOpenChange}>
+          <DialogContent className="max-h-[min(90vh,720px)] overflow-y-auto sm:max-w-lg">
+            <DialogHeader>
+              <DialogTitle>{editingId ? 'Edit product' : 'Add product'}</DialogTitle>
+              <DialogDescription>Fill in the details below.</DialogDescription>
+            </DialogHeader>
+            <form onSubmit={(e) => void handleSubmit(e)} className="space-y-4">
+              <div className="grid gap-3 sm:grid-cols-2">
+                <Field label="Name" required>
+                  <Input value={formName} onChange={(e) => setFormName(e.target.value)} required />
+                </Field>
+                <Field label="Category" required>
+                  <Input value={formCategory} onChange={(e) => setFormCategory(e.target.value)} required />
+                </Field>
+                <Field label="Variant (optional)">
+                  <Input value={formVariant} onChange={(e) => setFormVariant(e.target.value)} />
+                </Field>
+                <Field label="MRP" required>
+                  <Input
+                    type="number"
+                    inputMode="decimal"
+                    min={0}
+                    step="0.01"
+                    value={formMrp}
+                    onChange={(e) => setFormMrp(e.target.value)}
+                    required
+                  />
+                </Field>
+                <Field label="Cost" required>
+                  <Input
+                    type="number"
+                    inputMode="decimal"
+                    min={0}
+                    step="0.01"
+                    value={formCost}
+                    onChange={(e) => setFormCost(e.target.value)}
+                    required
+                  />
+                </Field>
+                <Field label="HSN (optional)">
+                  <Input value={formHsn} onChange={(e) => setFormHsn(e.target.value)} />
+                </Field>
+                <Field label="Tax % (optional)">
+                  <Input
+                    type="number"
+                    inputMode="decimal"
+                    min={0}
+                    max={100}
+                    step="0.01"
+                    value={formTax}
+                    onChange={(e) => setFormTax(e.target.value)}
+                  />
+                </Field>
+              </div>
+              <Button type="submit" size="full" disabled={saving} className="mt-2">
+                {saving ? 'Saving…' : 'Save Product'}
+              </Button>
+            </form>
+          </DialogContent>
+        </Dialog>
+
+        <Dialog open={archiveTargetId !== null} onOpenChange={(open) => !open && setArchiveTargetId(null)}>
+          <DialogContent className="sm:max-w-md">
+            <DialogHeader>
+              <DialogTitle>Archive product</DialogTitle>
+              <DialogDescription>Are you sure you want to archive this product?</DialogDescription>
+            </DialogHeader>
+            <div className="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
+              <Button type="button" variant="outline" onClick={() => setArchiveTargetId(null)}>
+                Cancel
+              </Button>
+              <Button
+                type="button"
+                className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+                onClick={() => void confirmArchive()}
+              >
+                Archive
+              </Button>
             </div>
-            <Button type="submit" size="full" disabled={saving} className="mt-2">
-              {saving ? 'Saving…' : editingId ? 'Save changes' : 'Save product'}
-            </Button>
-          </form>
-        </DialogContent>
-      </Dialog>
-
-      <AlertDialog open={archiveTargetId !== null} onOpenChange={(o) => !o && setArchiveTargetId(null)}>
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>Archive product?</AlertDialogTitle>
-            <AlertDialogDescription>
-              It will be hidden from lists and exports. This cannot be undone from the app.
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel>Cancel</AlertDialogCancel>
-            <AlertDialogAction
-              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
-              onClick={() => void confirmArchive()}
-            >
-              Archive
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
-    </div>
+          </DialogContent>
+        </Dialog>
+      </div>
+    </AppShell>
   );
 }
 
