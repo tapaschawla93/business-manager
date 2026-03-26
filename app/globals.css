@@ -27,9 +27,10 @@
     --input: 240 6% 90%;
     --ring: 142 71% 36%;
 
-    /* Controls vs cards (Phase B) */
+    /* Controls vs cards */
     --radius: 0.625rem;
-    --radius-card: 0.75rem;
+    /* Reference UI feels closer to rounded-2xl */
+    --radius-card: 1rem;
 
     /* Layout (Phase A) — FAB clears mobile nav in one formula */
     --sidebar-width: 240px;

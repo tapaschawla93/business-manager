@@ -49,14 +49,14 @@ export function AppShell({ children }: { children: ReactNode }) {
         className="fixed left-0 top-0 z-20 hidden h-screen w-[var(--sidebar-width)] flex-col border-r border-border bg-card shadow-sm md:flex"
         aria-label="Sidebar"
       >
-        <div className="flex items-center gap-2 border-b border-border px-4 py-4">
+        <div className="flex items-center gap-2 border-b border-border p-6">
           <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-primary text-primary-foreground">
             <Building2 className="h-5 w-5" aria-hidden />
           </div>
           <span className="text-lg font-bold tracking-tight text-foreground">BizManager</span>
         </div>
 
-        <nav className="flex flex-1 flex-col gap-1 p-3" aria-label="Main">
+        <nav className="flex flex-1 flex-col gap-1 p-4" aria-label="Main">
           {MAIN_NAV_ITEMS.map(({ href, label, Icon }) => {
             const active = isMainNavActive(pathname, href);
             return (
@@ -66,7 +66,7 @@ export function AppShell({ children }: { children: ReactNode }) {
                 className={cn(
                   'flex min-h-10 items-center gap-3 rounded-full px-3 py-2.5 text-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2',
                   active
-                    ? 'bg-accent text-primary'
+                    ? 'bg-accent text-primary shadow-sm ring-1 ring-primary/10'
                     : 'text-muted-foreground hover:bg-muted hover:text-foreground',
                 )}
               >
@@ -77,7 +77,7 @@ export function AppShell({ children }: { children: ReactNode }) {
           })}
         </nav>
 
-        <div className="mt-auto border-t border-border p-3">
+        <div className="mt-auto border-t border-border p-4">
           <Button
             type="button"
             variant="ghost"
