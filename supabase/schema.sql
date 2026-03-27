@@ -299,6 +299,53 @@ create policy "sale_items_select"
   );
 
 -- -----------------------------------------------------------------------------
+-- 4b) Vendors (tenant directory; optional link from expenses.vendor_id)
+-- -----------------------------------------------------------------------------
+create table if not exists public.vendors (
+  id uuid primary key default gen_random_uuid(),
+  business_id uuid not null references public.businesses (id) on delete restrict,
+  name text not null,
+  contact_person text,
+  phone text,
+  email text,
+  address text,
+  notes text,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  constraint vendors_business_name_key unique (business_id, name)
+);
+
+create index if not exists vendors_business_id_idx on public.vendors (business_id);
+
+drop trigger if exists set_vendors_updated_at on public.vendors;
+create trigger set_vendors_updated_at
+before update on public.vendors
+for each row
+execute function public.set_current_timestamp_updated_at();
+
+alter table public.vendors enable row level security;
+
+drop policy if exists "vendors_select" on public.vendors;
+drop policy if exists "vendors_insert" on public.vendors;
+drop policy if exists "vendors_update" on public.vendors;
+
+create policy "vendors_select"
+  on public.vendors
+  for select
+  using (business_id = public.current_business_id());
+
+create policy "vendors_insert"
+  on public.vendors
+  for insert
+  with check (business_id = public.current_business_id());
+
+create policy "vendors_update"
+  on public.vendors
+  for update
+  using (business_id = public.current_business_id())
+  with check (business_id = public.current_business_id());
+
+-- -----------------------------------------------------------------------------
 -- 5) Expenses (soft delete; no DELETE policy)
 -- -----------------------------------------------------------------------------
 create table if not exists public.expenses (
@@ -306,7 +353,9 @@ create table if not exists public.expenses (
   business_id uuid not null references public.businesses (id) on delete restrict,
   date timestamptz not null default now(),
   vendor_name text not null,
+  vendor_id uuid references public.vendors (id) on delete restrict,
   item_description text not null,
+  product_id uuid references public.products (id) on delete restrict,
   quantity numeric(10, 3) not null check (quantity > 0),
   unit_cost numeric(10, 2) not null check (unit_cost >= 0),
   total_amount numeric(10, 2) not null check (total_amount >= 0),
@@ -318,6 +367,8 @@ create table if not exists public.expenses (
 );
 
 create index if not exists expenses_business_id_idx on public.expenses (business_id);
+create index if not exists expenses_vendor_id_idx on public.expenses (vendor_id);
+create index if not exists expenses_product_id_idx on public.expenses (product_id);
 
 drop trigger if exists set_expenses_updated_at on public.expenses;
 create trigger set_expenses_updated_at

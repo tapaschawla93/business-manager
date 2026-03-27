@@ -1,16 +1,18 @@
 'use client';
 
-import { FormEvent, useEffect, useMemo, useState, type ReactNode } from 'react';
+import { FormEvent, useCallback, useEffect, useMemo, useState, type ReactNode } from 'react';
 import { toast } from 'sonner';
+import { VendorPicker } from '@/components/VendorPicker';
 import { PaymentToggle } from '@/components/PaymentToggle';
 import { formatInrDisplay } from '@/lib/formatInr';
 import { getSupabaseClient } from '@/lib/supabaseClient';
+import { fetchActiveVendors } from '@/lib/queries/vendors';
 import type { Expense } from '@/lib/types/expense';
+import type { Vendor } from '@/lib/types/vendor';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Card, CardContent } from '@/components/ui/card';
-import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 
 function nowDatetimeLocal(): string {
   const d = new Date();
@@ -63,6 +65,9 @@ export function ExpenseForm({
   onDiscardEdit: () => void;
   onSaved: () => void | Promise<void>;
 }) {
+  const [vendors, setVendors] = useState<Vendor[]>([]);
+  const [vendorDirectoryId, setVendorDirectoryId] = useState<string | null>(null);
+  const [pickerLabel, setPickerLabel] = useState<string | undefined>(undefined);
   const [vendorName, setVendorName] = useState('');
   const [itemDescription, setItemDescription] = useState('');
   const [quantity, setQuantity] = useState('1');
@@ -73,9 +78,22 @@ export function ExpenseForm({
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  const loadVendors = useCallback(async () => {
+    const supabase = getSupabaseClient();
+    const { data, error: vErr } = await fetchActiveVendors(supabase, { businessId });
+    if (vErr) return;
+    setVendors(data ?? []);
+  }, [businessId]);
+
+  useEffect(() => {
+    void loadVendors();
+  }, [loadVendors]);
+
   useEffect(() => {
     if (editing) {
       setVendorName(editing.vendor_name);
+      setVendorDirectoryId(editing.vendor_id);
+      setPickerLabel(editing.vendor_id ? editing.vendor_name : undefined);
       setItemDescription(editing.item_description);
       setQuantity(String(editing.quantity));
       setUnitCost(String(editing.unit_cost));
@@ -85,6 +103,8 @@ export function ExpenseForm({
       return;
     }
     setVendorName('');
+    setVendorDirectoryId(null);
+    setPickerLabel(undefined);
     setItemDescription('');
     setQuantity('1');
     setUnitCost('');
@@ -128,6 +148,7 @@ export function ExpenseForm({
     const common = {
       date: dateIso,
       vendor_name: vendorName.trim(),
+      vendor_id: vendorDirectoryId,
       item_description: itemDescription.trim(),
       quantity: q,
       unit_cost: u,
@@ -165,6 +186,8 @@ export function ExpenseForm({
       }
       toast.success('Expense added');
       setVendorName('');
+      setVendorDirectoryId(null);
+      setPickerLabel(undefined);
       setItemDescription('');
       setQuantity('1');
       setUnitCost('');
@@ -191,12 +214,36 @@ export function ExpenseForm({
                   required
                 />
               </Field>
+              <div className="space-y-2 sm:col-span-2">
+                <Label className="text-xs">Vendor directory (optional)</Label>
+                <VendorPicker
+                  vendors={vendors}
+                  triggerLabel={pickerLabel}
+                  onPick={(v) => {
+                    setVendorDirectoryId(v.id);
+                    setVendorName(v.name);
+                    setPickerLabel(v.name);
+                  }}
+                  onClear={() => {
+                    setVendorDirectoryId(null);
+                    setPickerLabel(undefined);
+                  }}
+                />
+                <p className="text-[11px] text-muted-foreground">
+                  Picking a row sets a link for reporting. Clearing or editing the name below removes the link (does not create a
+                  vendor).
+                </p>
+              </div>
               <div className="space-y-1 sm:col-span-2">
-                <Label className="text-xs">Vendor *</Label>
+                <Label className="text-xs">Vendor name *</Label>
                 <Input
                   value={vendorName}
-                  onChange={(e) => setVendorName(e.target.value)}
-                  placeholder="Vendor name"
+                  onChange={(e) => {
+                    setVendorName(e.target.value);
+                    setVendorDirectoryId(null);
+                    setPickerLabel(undefined);
+                  }}
+                  placeholder="As shown on expense / invoice"
                   required
                   className="mt-1.5"
                 />

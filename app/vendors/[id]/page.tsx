@@ -109,7 +109,13 @@ export default function VendorDetailPage() {
         </Button>
       </div>
 
-      <div className="grid gap-3 sm:grid-cols-3">
+      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+        <Card>
+          <CardContent className="p-4">
+            <p className="text-xs font-medium text-muted-foreground">Contact person</p>
+            <p className="mt-1 text-sm font-medium">{vendor.contact_person ?? '—'}</p>
+          </CardContent>
+        </Card>
         <Card>
           <CardContent className="p-4">
             <p className="text-xs font-medium text-muted-foreground">Phone</p>
@@ -120,6 +126,12 @@ export default function VendorDetailPage() {
           <CardContent className="p-4">
             <p className="text-xs font-medium text-muted-foreground">Email</p>
             <p className="mt-1 text-sm font-medium break-all">{vendor.email ?? '—'}</p>
+          </CardContent>
+        </Card>
+        <Card className="sm:col-span-2 lg:col-span-3">
+          <CardContent className="p-4">
+            <p className="text-xs font-medium text-muted-foreground">Address</p>
+            <p className="mt-1 text-sm font-medium">{vendor.address ?? '—'}</p>
           </CardContent>
         </Card>
         <Card>

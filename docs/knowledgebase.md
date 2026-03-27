@@ -213,3 +213,24 @@
 - **Tradeoffs**:
   - Row-by-row inserts are slower than a single insert but are safer and match “partial success” UX.
   - If imports become large (10k+ rows), switch to chunking + per-row savepoints via RPC, or staging tables + server-side validation.
+
+---
+
+## Vendors module (V2 slice — prd.v2.4.2)
+
+### Level 1
+
+- **What**: `public.vendors` is a per-tenant directory (`business_id`, unique `(business_id, name)`). Expenses always store `vendor_name` (required text); optionally `vendor_id` links a row to the directory for roll-ups on the vendor detail page.
+- **Why**: Picking from the directory keeps history consistent; free-text names support one-off suppliers without creating directory rows.
+- **Rule**: Typing a different name or clearing the picker sets `vendor_id` to **null** — the app does **not** auto-create vendors from expense text.
+
+### Level 2
+
+- **New columns** (nullable): `contact_person`, `address`; `email` / `phone` / `notes` remain optional.
+- **Bulk import**: Same partial-success pattern as Products — `template_vendors.csv` columns `name,contact_person,phone,address,notes,email`; row-by-row `INSERT` under RLS; `vendors_import_errors.csv` on failures.
+- **Vendor detail expenses**: Includes rows with `vendor_id = this vendor` **or** legacy/free-text match on `vendor_name` (case-insensitive) when `vendor_id` is null.
+
+### Level 3
+
+- **Migration**: `20260327200000_vendors_contact_address.sql` adds nullable text columns; no policy changes.
+- **Greenfield `schema.sql`**: Includes full `vendors` table + `expenses.vendor_id` / `expenses.product_id` FKs for consistency with inventory migration track.

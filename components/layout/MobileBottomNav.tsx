@@ -5,7 +5,7 @@ import { usePathname } from 'next/navigation';
 import { MAIN_NAV_ITEMS, isMainNavActive } from '@/lib/nav';
 import { cn } from '@/lib/utils';
 
-/** Fixed bar — tap targets ≥ 44px; V1 shows four items only. */
+/** Fixed bar — tap targets ≥ 44px; mirrors `MAIN_NAV_ITEMS` in `lib/nav.ts`. */
 export function MobileBottomNav() {
   const pathname = usePathname();
 

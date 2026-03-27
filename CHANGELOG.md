@@ -32,15 +32,17 @@ All notable changes to this project are documented here. Format loosely follows 
 - **Sales UI:** New Sale form now supports optional customer name/phone/address and optional sale type; Sales list header renamed from **Status** to **Mode of payment**.
 - **Sales UI flow:** In New Sale, line entry now starts with product search, followed by qty/price, then add-more; sale/customer/date details remain below line items.
 - Removed redundant per-page export CTA/buttons from **Sales** and **Expenses** pages; Settings remains the centralized export surface.
-- **Expenses form behavior:** Write path now uses free-text `vendor_name` only (no `vendor_id` linkage in saves/updates) to stay compatible with current schema.
+- **Vendors (V2 slice):** `vendors.contact_person` and `vendors.address` (nullable). Vendors page: extended create form, directory table columns, CSV template + bulk upload (partial success + error CSV). Vendor detail shows contact/address. **Expenses:** optional `VendorPicker` sets `vendor_id` + `vendor_name`; editing the name or clearing the picker drops `vendor_id` (free-text does not auto-create a vendor).
 
 ### Fixed
+
+- **Vercel build (PostCSS)**: Pinned `postcss-load-config` to `^4.0.1` via `package.json` `overrides`. `tailwindcss` 3.4.19 pulled in `postcss-load-config` v6 as a transitive dependency, which is incompatible with Next.js 14.1.0's PostCSS plugin validator. This caused a `Malformed PostCSS Configuration` crash exclusively during `next build` (Vercel production) while `next dev` continued to work locally. The override forces v4 for all consumers and restores build compatibility.
 
 - **`save_sale`**: `jsonb_array_elements` loop uses explicit `elem` column (avoids `record has no field` runtime error).
 - **Soft-delete UX**: archive no longer chains `.select()` after update (RETURNING vs SELECT RLS on archived rows); products/expenses archive use definer RPCs for reliable `deleted_at`.
 - **Sales form**: removing the only line resets to a fresh empty line; **`save_sale`** JSON response validated before showing ₹ totals (amber fallback if payload incomplete).
 - **Dashboard**: bad or unparseable **`get_top_products`** JSONB → returned **error** (surface in UI), not silent empty top-product tables; string JSONB coerced via `JSON.parse` when needed.
-- **Expense edit runtime errors**: removed writes to missing `product_id`/`vendor_id` schema columns from expense form flow.
+- **Expense edit runtime errors**: removed writes to `product_id` when column/deploy mismatch caused failures; `vendor_id` is supported again when present in schema.
 - **Expense list table semantics**: replaced confusing `Stock` column with `Units` and bound it to entered quantity values.
 - **Bulk import reliability**: Products/Expenses imports now insert row-by-row for true partial success; one bad row no longer blocks all valid rows.
 - **Bulk import date handling**: accepts historical/present/future dates with flexible input formats; rejects impossible calendar dates via strict normalization.
