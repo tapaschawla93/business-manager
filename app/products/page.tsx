@@ -1,10 +1,12 @@
 'use client';
 
-import { FormEvent, useCallback, useEffect, useMemo, useState, type ReactNode } from 'react';
+import { FormEvent, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { useRouter } from 'next/navigation';
 import { toast } from 'sonner';
-import { Pencil, Plus, RefreshCw, Search, Trash2, Package2 } from 'lucide-react';
+import { Download, Pencil, Plus, RefreshCw, Search, Trash2, Upload, Package2 } from 'lucide-react';
 import { formatInrDisplay } from '@/lib/formatInr';
+import { downloadCsv, rowsToCsv } from '@/lib/exportCsv';
+import { buildImportIssuesCsv, getOptionalNumber, getRequiredNumber, getString, parseCsv, type ImportIssue } from '@/lib/importCsv';
 import { getSupabaseClient } from '@/lib/supabaseClient';
 import type { Product } from '@/lib/types/product';
 import { Button } from '@/components/ui/button';
@@ -63,6 +65,8 @@ export default function ProductsPage() {
   const [dialogOpen, setDialogOpen] = useState(false);
   const [archiveTargetId, setArchiveTargetId] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
+  const [importing, setImporting] = useState(false);
+  const productsUploadRef = useRef<HTMLInputElement | null>(null);
 
   const loadProducts = useCallback(async () => {
     const supabase = getSupabaseClient();
@@ -270,6 +274,79 @@ export default function ProductsPage() {
     await loadProducts();
   }
 
+  function downloadProductsTemplate() {
+    const headers = ['name', 'category', 'mrp', 'cost_price', 'hsn_code', 'tax_pct', 'variant'];
+    const rows = [
+      {
+        name: 'Sample Product',
+        category: 'GENERAL',
+        mrp: '1000',
+        cost_price: '700',
+        hsn_code: '',
+        tax_pct: '18',
+        variant: '',
+      },
+    ];
+    downloadCsv('template_products.csv', rowsToCsv(headers, rows));
+  }
+
+  async function importProductsFile(file: File) {
+    if (!businessId) return;
+    setImporting(true);
+    const text = await file.text();
+    const { rows } = parseCsv(text);
+    const issues: ImportIssue[] = [];
+    const valid: { rowNo: number; payload: Record<string, unknown> }[] = [];
+
+    rows.forEach((r, idx) => {
+      const rowNo = idx + 2;
+      const name = getString(r, 'name');
+      const category = getString(r, 'category');
+      const mrp = getRequiredNumber(r, 'mrp');
+      const cost = getRequiredNumber(r, 'cost_price');
+      const tax = getOptionalNumber(r, 'tax_pct');
+
+      if (!name) issues.push({ row: rowNo, field: 'name', message: 'required' });
+      if (!category) issues.push({ row: rowNo, field: 'category', message: 'required' });
+      if (mrp === null || mrp < 0) issues.push({ row: rowNo, field: 'mrp', message: 'must be >= 0 number' });
+      if (cost === null || cost < 0) issues.push({ row: rowNo, field: 'cost_price', message: 'must be >= 0 number' });
+      if (tax !== null && (tax < 0 || tax > 100)) issues.push({ row: rowNo, field: 'tax_pct', message: 'must be between 0 and 100' });
+
+      if (name && category && mrp !== null && mrp >= 0 && cost !== null && cost >= 0) {
+        valid.push({
+          rowNo,
+          payload: {
+            business_id: businessId,
+            name,
+            category,
+            mrp,
+            cost_price: cost,
+            hsn_code: getString(r, 'hsn_code') || null,
+            tax_pct: tax,
+            variant: getString(r, 'variant') || null,
+          },
+        });
+      }
+    });
+
+    let inserted = 0;
+    if (valid.length > 0) {
+      const supabase = getSupabaseClient();
+      for (const v of valid) {
+        const { error: insErr } = await supabase.from('products').insert(v.payload);
+        if (insErr) issues.push({ row: v.rowNo, field: 'row', message: insErr.message });
+        else inserted += 1;
+      }
+      await loadProducts();
+    }
+
+    setImporting(false);
+    if (issues.length > 0) {
+      downloadCsv('products_import_errors.csv', buildImportIssuesCsv(issues));
+    }
+    toast.success(`Products import complete: ${inserted} inserted, ${issues.length} failed.`);
+  }
+
   if (checkingSession || !sessionOk) {
     return (
       <div className="space-y-6">
@@ -286,10 +363,37 @@ export default function ProductsPage() {
         title="Product Repository"
         description="Master list of all products and their category mappings."
         actions={
-          <Button type="button" onClick={openAdd} className="h-11 gap-2 rounded-xl font-semibold shadow-sm">
-            <Plus className="h-4 w-4" aria-hidden />
-            Add Product
-          </Button>
+          <>
+            <Button type="button" variant="outline" className="h-11 gap-2 rounded-xl" onClick={downloadProductsTemplate}>
+              <Download className="h-4 w-4" aria-hidden />
+              Template
+            </Button>
+            <Button
+              type="button"
+              variant="outline"
+              className="h-11 gap-2 rounded-xl"
+              onClick={() => productsUploadRef.current?.click()}
+              disabled={importing}
+            >
+              <Upload className="h-4 w-4" aria-hidden />
+              {importing ? 'Uploading…' : 'Bulk Upload'}
+            </Button>
+            <input
+              ref={productsUploadRef}
+              type="file"
+              accept=".csv,text/csv"
+              className="hidden"
+              onChange={(e) => {
+                const file = e.currentTarget.files?.[0];
+                if (file) void importProductsFile(file);
+                e.currentTarget.value = '';
+              }}
+            />
+            <Button type="button" onClick={openAdd} className="h-11 gap-2 rounded-xl font-semibold shadow-sm">
+              <Plus className="h-4 w-4" aria-hidden />
+              Add Product
+            </Button>
+          </>
         }
       />
 

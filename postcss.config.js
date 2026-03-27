@@ -1,7 +1,7 @@
-/** PostCSS config — CommonJS so cloud builds (e.g. Vercel) reliably resolve Tailwind. */
+/** PostCSS config — Next.js only accepts plugin names (strings) + options objects, not require(). */
 module.exports = {
   plugins: {
-    tailwindcss: require('tailwindcss'),
-    autoprefixer: require('autoprefixer'),
+    tailwindcss: {},
+    autoprefixer: {},
   },
 };

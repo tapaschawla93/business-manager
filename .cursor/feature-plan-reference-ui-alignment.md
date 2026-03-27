@@ -1,6 +1,6 @@
 # Feature Implementation Plan — Reference UI Alignment (visual-only)
 
-**Overall Progress:** `86%`
+**Overall Progress:** `84%`
 
 ## TLDR
 
@@ -50,12 +50,14 @@ Align the current app’s look-and-feel to the `/reference-ui` SaaS aesthetic by
 - [ ] 🟥 **Step 7: Page migration (visual only; no data changes)**
   - [ ] 🟨 Apply `PageHeader` + Card-based composition to remaining routes in this order:
     - Login → Settings → Dashboard → Products → Expenses → Sales
-  - [x] 🟩 **Products page redesigned (complete visual rebuild):**
-    - Added utility top header with page title and user info chip
-    - Reworked controls row: search + primary CTA aligned to screenshot
-    - Upgraded table hierarchy/alignment and row affordances
-    - Styled action buttons (`Edit`/`Archive`) as clean dashboard controls
-    - Updated dialog title/copy and preserved full-width submit flow
+  - [x] 🟩 **Products page redesigned (visual rebuild done):**
+    - Updated header/CTA/table density and empty/loading states
+    - Dialog-based add/edit + archive confirmation UI
+    - Margin% is color-coded (green/amber/red)
+  - [ ] 🟥 **Products page system-spec cleanup pending:**
+    - Missing `AppShell` wrapper on this route
+    - Table still includes a `Variant` column (spec expects only Name/Category/MRP/Cost/Margin%/Actions)
+    - Page header still uses `PageHeader` styling (spec requested `h1` weight 500 + specific typography)
   - [ ] 🟥 Remaining routes: Login, Settings, Dashboard, Expenses, Sales
   - [ ] 🟨 Ensure every section is inside `Card` and tables/forms use primitives.
 
@@ -68,4 +70,8 @@ Align the current app’s look-and-feel to the `/reference-ui` SaaS aesthetic by
 
 - Supabase logic, data fetching, RPCs, database schema, RLS, migrations.
 - Introducing new fields present in `/reference-ui` but not in this app.
+
+## Cross-plan note
+
+- Bulk upload + sales schema updates are being tracked in `.cursor/feature-plan-v1-wrapup-bulk-upload.md` (separate non-visual stream).
 

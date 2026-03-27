@@ -177,3 +177,39 @@
 - **Performance**: Single pass per RPC; indexes on **`(business_id)`** and foreign keys matter at scale. **JSONB** response for top products avoids defining a composite PostgreSQL **RETURNS TABLE** type for two ranked lists.
 - **Alternatives**: **Materialized views** per tenant (refresh jobs); **warehouse** (BigQuery, etc.) for heavy BI—overkill for V1.
 - **Senior lens**: Dashboard RPCs are **part of the product contract**—when you change a column or formula, **version or migrate** intentionally; add **tests or SQL snapshots** for golden aggregates as data grows.
+
+---
+
+## Bulk upload (V1 wrap-up) — templates, partial success, and dates
+
+### Level 1 — Core concept
+
+- **What**: Each module (Products / Expenses / Sales) provides a **CSV template** and a **CSV uploader** that inserts rows into Supabase.
+- **Why**: Operations teams need fast backfills and historical imports; hand-entering is slow and error-prone.
+- **Pattern**: **Partial success** — valid rows insert, invalid rows are skipped with a downloadable **error CSV**.
+- **Fit in this codebase**:
+  - Templates + upload UI live on module pages and in Settings.
+  - Shared parsing helpers live in `lib/importCsv.ts`.
+
+### Level 2 — How it works (and why)
+
+- **CSV parsing**: `parseCsv()` parses quoted CSV and returns `headers + rows` as strings. Helpers (`getString`, `getRequiredNumber`, etc.) normalize values before validation.
+- **True partial success** (important): doing a single `insert(validRows)` can fail the entire batch if one row violates a constraint.
+  - **Fix shipped**: Insert **row-by-row** and collect row-level errors into `ImportIssue[]`, then export errors via `buildImportIssuesCsv()`.
+- **Dates**:
+  - Sales uses a Postgres `date` column. Expenses uses `timestamptz`.
+  - We normalize user-provided CSV dates using:
+    - `normalizeDateYmd()` → `YYYY-MM-DD` for `date`
+    - `normalizeDateTimeIso()` → ISO for `timestamptz` (date-only becomes local midnight)
+  - Supported formats are intentionally flexible (e.g. `YYYY-MM-DD`, `DD/MM/YYYY`, ISO datetime) so imports can include **historical/future** dates.
+
+### Level 3 — Deep dive (production behavior)
+
+- **Calendar-valid dates**: naive string normalization accepts impossible dates (e.g. `31/02/2026`).
+  - **Fix shipped**: Validate Y/M/D via UTC round-trip (`Date.UTC`) so only real calendar days pass.
+- **Error reporting**:
+  - `ImportIssue` tracks **CSV row number** (1-based with header row), a field label, and a message.
+  - Error CSVs let ops fix only failed rows and re-upload.
+- **Tradeoffs**:
+  - Row-by-row inserts are slower than a single insert but are safer and match “partial success” UX.
+  - If imports become large (10k+ rows), switch to chunking + per-row savepoints via RPC, or staging tables + server-side validation.

@@ -86,7 +86,8 @@ Replace incremental UI patches with a **single coherent system**: define **globa
 
 - [ ] 🟥 Login → Settings
 - [x] 🟩 **Dashboard** — `PageHeader`, `ui-page-description` for loading/empty, KPI values `text-finance-positive` / `text-finance-negative`, `KPICard`/`TopProductsTable` use default `Card` + `ui-section-title` (no duplicate radii).
-- [ ] 🟥 Products → Expenses → Sales → cleanup.
+- [ ] 🟨 Products → Expenses → Sales → cleanup (starting with Products UI cleanup).
+  - 🟨 Products route currently has a visual rebuild, but still misses Phase A layout wrapper (`AppShell`) and includes a `Variant` column vs the required dashboard spec.
 
 ## Phase E — Verification
 
@@ -106,3 +107,5 @@ Replace incremental UI patches with a **single coherent system**: define **globa
 ---
 
 *Phases **A–C** implemented: execute **Phase D** page order next.*
+
+Note: V1 wrap-up work for sales optional customer fields, sale type, and bulk upload templates/imports is tracked separately in `.cursor/feature-plan-v1-wrapup-bulk-upload.md`.

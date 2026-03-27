@@ -34,7 +34,19 @@ export async function ensureBusinessForCurrentUser(
   });
 
   if (error) {
-    return { data: null, error: new Error(error.message) };
+    const msg = error.message;
+    const m = msg.toLowerCase();
+    const looksLikeMissingSchema =
+      m.includes('create_business_for_user') ||
+      m.includes('could not find the function') ||
+      m.includes('schema cache') ||
+      (m.includes('relation') && m.includes('does not exist'));
+    const hint =
+      ' Open your Supabase project → SQL Editor → paste and run `supabase/schema.sql` from this app (repo root), then sign in again.';
+    return {
+      data: null,
+      error: new Error(looksLikeMissingSchema ? msg + hint : msg),
+    };
   }
 
   return { data: data as string, error: null };

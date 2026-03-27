@@ -27,8 +27,17 @@ import {
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog';
 import { Fab } from '@/components/Fab';
-import { Download, Plus } from 'lucide-react';
+import { Download, Plus, Upload } from 'lucide-react';
 import { downloadCsv, rowsToCsv } from '@/lib/exportCsv';
+import {
+  buildImportIssuesCsv,
+  getOptionalNumber,
+  getRequiredNumber,
+  getString,
+  normalizeDateTimeIso,
+  parseCsv,
+  type ImportIssue,
+} from '@/lib/importCsv';
 import { PageHeader } from '@/components/PageHeader';
 
 export default function ExpensesPage() {
@@ -43,6 +52,7 @@ export default function ExpensesPage() {
   const [editing, setEditing] = useState<Expense | null>(null);
   const [dialogOpen, setDialogOpen] = useState(false);
   const [archiveTargetId, setArchiveTargetId] = useState<string | null>(null);
+  const [importing, setImporting] = useState(false);
 
   const loadExpenses = useCallback(async () => {
     if (!businessId) return;
@@ -134,6 +144,85 @@ export default function ExpensesPage() {
     await loadExpenses();
   }
 
+  function downloadExpensesTemplate() {
+    const headers = ['date', 'vendor_name', 'item_description', 'quantity', 'unit_cost', 'total_amount', 'payment_mode', 'notes'];
+    const rows = [
+      {
+        date: '2026-03-27',
+        vendor_name: 'ABC Traders',
+        item_description: 'Packaging',
+        quantity: '10',
+        unit_cost: '25',
+        total_amount: '250',
+        payment_mode: 'cash',
+        notes: '',
+      },
+    ];
+    downloadCsv('template_expenses.csv', rowsToCsv(headers, rows));
+  }
+
+  async function importExpensesFile(file: File) {
+    if (!businessId) return;
+    setImporting(true);
+    const text = await file.text();
+    const { rows } = parseCsv(text);
+    const issues: ImportIssue[] = [];
+    const valid: { rowNo: number; payload: Record<string, unknown> }[] = [];
+
+    rows.forEach((r, idx) => {
+      const rowNo = idx + 2;
+      const dateRaw = getString(r, 'date');
+      const date = normalizeDateTimeIso(dateRaw);
+      const vendor = getString(r, 'vendor_name');
+      const item = getString(r, 'item_description');
+      const qty = getRequiredNumber(r, 'quantity');
+      const unitCost = getRequiredNumber(r, 'unit_cost');
+      const mode = getString(r, 'payment_mode').toLowerCase();
+      const totalRaw = getOptionalNumber(r, 'total_amount');
+
+      if (!date) issues.push({ row: rowNo, field: 'date', message: 'invalid date (use YYYY-MM-DD or DD/MM/YYYY)' });
+      if (!vendor) issues.push({ row: rowNo, field: 'vendor_name', message: 'required' });
+      if (!item) issues.push({ row: rowNo, field: 'item_description', message: 'required' });
+      if (qty === null || qty <= 0) issues.push({ row: rowNo, field: 'quantity', message: 'must be > 0' });
+      if (unitCost === null || unitCost < 0) issues.push({ row: rowNo, field: 'unit_cost', message: 'must be >= 0' });
+      if (mode !== 'cash' && mode !== 'online') issues.push({ row: rowNo, field: 'payment_mode', message: "must be 'cash' or 'online'" });
+
+      if (date && vendor && item && qty !== null && qty > 0 && unitCost !== null && unitCost >= 0 && (mode === 'cash' || mode === 'online')) {
+        valid.push({
+          rowNo,
+          payload: {
+            business_id: businessId,
+            date,
+            vendor_name: vendor,
+            item_description: item,
+            quantity: qty,
+            unit_cost: unitCost,
+            total_amount: totalRaw ?? qty * unitCost,
+            payment_mode: mode,
+            notes: getString(r, 'notes') || null,
+          },
+        });
+      }
+    });
+
+    let inserted = 0;
+    if (valid.length > 0) {
+      const supabase = getSupabaseClient();
+      for (const v of valid) {
+        const { error: insErr } = await supabase.from('expenses').insert(v.payload);
+        if (insErr) issues.push({ row: v.rowNo, field: 'row', message: insErr.message });
+        else inserted += 1;
+      }
+      await loadExpenses();
+    }
+
+    setImporting(false);
+    if (issues.length > 0) {
+      downloadCsv('expenses_import_errors.csv', buildImportIssuesCsv(issues));
+    }
+    toast.success(`Expenses import complete: ${inserted} inserted, ${issues.length} failed.`);
+  }
+
   if (checkingSession || !sessionOk) {
     return <p className="text-sm text-muted-foreground">Loading…</p>;
   }
@@ -149,32 +238,31 @@ export default function ExpensesPage() {
         description="Manage purchases and operating costs. Total is quantity × unit cost."
         actions={
           <>
+            <Button type="button" variant="outline" className="h-11 gap-2 rounded-xl" onClick={downloadExpensesTemplate}>
+              <Download className="h-4 w-4" aria-hidden />
+              Template
+            </Button>
             <Button
               type="button"
               variant="outline"
-              className="h-11 gap-2 rounded-xl border-border/80 font-semibold"
-              onClick={() => {
-                if (!expenses.length) {
-                  toast.message('No expenses to export.');
-                  return;
-                }
-                const headers = ['date', 'vendor', 'item', 'quantity', 'unit_cost', 'total', 'payment'];
-                const csvRows = expenses.map((e) => ({
-                  date: e.date,
-                  vendor: e.vendor_name,
-                  item: e.item_description,
-                  quantity: e.quantity,
-                  unit_cost: e.unit_cost ?? '',
-                  total: e.total_amount,
-                  payment: e.payment_mode,
-                }));
-                downloadCsv('expenses.csv', rowsToCsv(headers, csvRows));
-                toast.success('Exported expenses.csv');
-              }}
+              className="h-11 gap-2 rounded-xl"
+              onClick={() => document.getElementById('expenses-upload-input')?.click()}
+              disabled={importing}
             >
-              <Download className="h-4 w-4" aria-hidden />
-              Export CSV
+              <Upload className="h-4 w-4" aria-hidden />
+              {importing ? 'Uploading…' : 'Bulk Upload'}
             </Button>
+            <input
+              id="expenses-upload-input"
+              type="file"
+              accept=".csv,text/csv"
+              className="hidden"
+              onChange={(e) => {
+                const file = e.currentTarget.files?.[0];
+                if (file) void importExpensesFile(file);
+                e.currentTarget.value = '';
+              }}
+            />
             <Button type="button" className="h-11 gap-2 rounded-xl font-semibold shadow-sm" onClick={openNew}>
               <Plus className="h-4 w-4" aria-hidden />
               New expense

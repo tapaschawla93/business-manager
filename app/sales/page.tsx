@@ -2,13 +2,22 @@
 
 import { useCallback, useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { Download, Plus } from 'lucide-react';
+import { Download, Plus, Upload } from 'lucide-react';
 import { toast } from 'sonner';
 import { getSupabaseClient } from '@/lib/supabaseClient';
 import { fetchSalesList } from '@/lib/queries/salesList';
 import type { SaleListRow } from '@/lib/queries/salesList';
 import { formatInrDisplay } from '@/lib/formatInr';
 import { downloadCsv, rowsToCsv } from '@/lib/exportCsv';
+import {
+  buildImportIssuesCsv,
+  getNullableString,
+  getRequiredNumber,
+  getString,
+  normalizeDateYmd,
+  parseCsv,
+  type ImportIssue,
+} from '@/lib/importCsv';
 import { PageHeader } from '@/components/PageHeader';
 import { Button } from '@/components/ui/button';
 import { Fab } from '@/components/Fab';
@@ -47,6 +56,7 @@ export default function SalesPage() {
   const [rows, setRows] = useState<SaleListRow[] | null>(null);
   const [loading, setLoading] = useState(true);
   const [dialogOpen, setDialogOpen] = useState(false);
+  const [importing, setImporting] = useState(false);
 
   const load = useCallback(async () => {
     const supabase = getSupabaseClient();
@@ -89,33 +99,152 @@ export default function SalesPage() {
     void load();
   }, [ready, load]);
 
-  function exportCsvAction() {
-    if (!rows?.length) {
-      toast.message('No sales to export yet.');
+  function downloadSalesTemplate() {
+    const headers = [
+      'sale_ref',
+      'date',
+      'customer_name',
+      'customer_phone',
+      'customer_address',
+      'sale_type',
+      'payment_mode',
+      'notes',
+      'product_lookup',
+      'quantity',
+      'sale_price',
+    ];
+    const rowsTemplate = [
+      {
+        sale_ref: 'S1',
+        date: '2026-03-27',
+        customer_name: 'John',
+        customer_phone: '',
+        customer_address: '',
+        sale_type: 'B2C',
+        payment_mode: 'cash',
+        notes: '',
+        product_lookup: 'Sample Product A',
+        quantity: '2',
+        sale_price: '1500',
+      },
+    ];
+    downloadCsv('template_sales.csv', rowsToCsv(headers, rowsTemplate));
+  }
+
+  async function importSalesFile(file: File) {
+    setImporting(true);
+    const supabase = getSupabaseClient();
+    const text = await file.text();
+    const { rows: csvRows } = parseCsv(text);
+    const issues: ImportIssue[] = [];
+
+    const { data: productRows, error: pErr } = await supabase
+      .from('products')
+      .select('id, name, variant')
+      .is('deleted_at', null);
+    if (pErr) {
+      setImporting(false);
+      toast.error(pErr.message);
       return;
     }
-    const headers = [
-      'order_ref',
-      'date',
-      'product',
-      'category',
-      'quantity',
-      'customer',
-      'amount',
-      'status',
-    ];
-    const csvRows = rows.map((r) => ({
-      order_ref: orderLabel(r.sale.id),
-      date: r.sale.date,
-      product: r.lineSummary.primaryProduct,
-      category: r.lineSummary.primaryCategory,
-      quantity: r.lineSummary.totalQty,
-      customer: r.sale.customer_name,
-      amount: r.sale.total_amount,
-      status: r.sale.payment_mode === 'online' ? 'Online' : 'Cash',
-    }));
-    downloadCsv('sales_records.csv', rowsToCsv(headers, csvRows));
-    toast.success('Exported sales_records.csv');
+
+    const productMap = new Map<string, string>();
+    for (const p of (productRows ?? []) as { id: string; name: string; variant: string | null }[]) {
+      productMap.set(p.name.trim().toLowerCase(), p.id);
+      if (p.variant && p.variant.trim() !== '') {
+        productMap.set(`${p.name.trim().toLowerCase()}::${p.variant.trim().toLowerCase()}`, p.id);
+      }
+    }
+
+    type Group = {
+      rowNos: number[];
+      date: string;
+      customerName: string | null;
+      customerPhone: string | null;
+      customerAddress: string | null;
+      saleType: 'B2C' | 'B2B' | 'B2B2C' | null;
+      paymentMode: 'cash' | 'online';
+      notes: string | null;
+      lines: { product_id: string; quantity: number; sale_price: number }[];
+    };
+
+    const groups = new Map<string, Group>();
+    csvRows.forEach((r, idx) => {
+      const rowNo = idx + 2;
+      const ref = getString(r, 'sale_ref');
+      const dateRaw = getString(r, 'date');
+      const date = normalizeDateYmd(dateRaw);
+      const paymentMode = getString(r, 'payment_mode').toLowerCase();
+      const saleTypeRaw = getString(r, 'sale_type').toUpperCase();
+      const lookup = getString(r, 'product_lookup').toLowerCase();
+      const qty = getRequiredNumber(r, 'quantity');
+      const salePrice = getRequiredNumber(r, 'sale_price');
+      const productId = productMap.get(lookup);
+
+      if (!ref) issues.push({ row: rowNo, field: 'sale_ref', message: 'required' });
+      if (!date) issues.push({ row: rowNo, field: 'date', message: 'invalid date (use YYYY-MM-DD or DD/MM/YYYY)' });
+      if (paymentMode !== 'cash' && paymentMode !== 'online') {
+        issues.push({ row: rowNo, field: 'payment_mode', message: "must be 'cash' or 'online'" });
+      }
+      if (saleTypeRaw !== '' && !['B2C', 'B2B', 'B2B2C'].includes(saleTypeRaw)) {
+        issues.push({ row: rowNo, field: 'sale_type', message: 'must be B2C/B2B/B2B2C' });
+      }
+      if (qty === null || qty <= 0) issues.push({ row: rowNo, field: 'quantity', message: 'must be > 0' });
+      if (salePrice === null || salePrice < 0) issues.push({ row: rowNo, field: 'sale_price', message: 'must be >= 0' });
+      if (!productId) issues.push({ row: rowNo, field: 'product_lookup', message: 'no matching product' });
+
+      if (!ref || !date || (paymentMode !== 'cash' && paymentMode !== 'online') || qty === null || qty <= 0 || salePrice === null || salePrice < 0 || !productId) {
+        return;
+      }
+
+      const existing = groups.get(ref);
+      const saleType = saleTypeRaw === '' ? null : (saleTypeRaw as 'B2C' | 'B2B' | 'B2B2C');
+      const draft: Group = existing ?? {
+        rowNos: [],
+        date,
+        customerName: getNullableString(r, 'customer_name'),
+        customerPhone: getNullableString(r, 'customer_phone'),
+        customerAddress: getNullableString(r, 'customer_address'),
+        saleType,
+        paymentMode: paymentMode as 'cash' | 'online',
+        notes: getNullableString(r, 'notes'),
+        lines: [],
+      };
+
+      if (existing) {
+        if (existing.date !== date) issues.push({ row: rowNo, field: 'date', message: 'inconsistent in sale_ref' });
+        if (existing.paymentMode !== paymentMode) issues.push({ row: rowNo, field: 'payment_mode', message: 'inconsistent in sale_ref' });
+      }
+
+      draft.rowNos.push(rowNo);
+      draft.lines.push({ product_id: productId, quantity: qty, sale_price: salePrice });
+      groups.set(ref, draft);
+    });
+
+    let inserted = 0;
+    for (const [ref, group] of groups.entries()) {
+      if (issues.some((i) => group.rowNos.includes(i.row))) continue;
+      const { error } = await supabase.rpc('save_sale', {
+        p_date: group.date,
+        p_customer_name: group.customerName,
+        p_customer_phone: group.customerPhone,
+        p_customer_address: group.customerAddress,
+        p_sale_type: group.saleType,
+        p_payment_mode: group.paymentMode,
+        p_notes: group.notes,
+        p_lines: group.lines,
+      });
+      if (error) {
+        issues.push({ row: group.rowNos[0], field: 'sale_ref', message: `${ref}: ${error.message}` });
+      } else {
+        inserted += 1;
+      }
+    }
+
+    setImporting(false);
+    if (issues.length > 0) downloadCsv('sales_import_errors.csv', buildImportIssuesCsv(issues));
+    toast.success(`Sales import complete: ${inserted} inserted, ${issues.length} failed rows.`);
+    await load();
   }
 
   if (!ready) {
@@ -134,15 +263,31 @@ export default function SalesPage() {
         description="Track all your customer orders and revenue."
         actions={
           <>
+            <Button type="button" variant="outline" className="h-11 gap-2 rounded-xl" onClick={downloadSalesTemplate}>
+              <Download className="h-4 w-4" aria-hidden />
+              Template
+            </Button>
             <Button
               type="button"
               variant="outline"
-              className="h-11 gap-2 rounded-xl border-border/80 font-semibold"
-              onClick={exportCsvAction}
+              className="h-11 gap-2 rounded-xl"
+              onClick={() => document.getElementById('sales-upload-input')?.click()}
+              disabled={importing}
             >
-              <Download className="h-4 w-4" aria-hidden />
-              Export CSV
+              <Upload className="h-4 w-4" aria-hidden />
+              {importing ? 'Uploading…' : 'Bulk Upload'}
             </Button>
+            <input
+              id="sales-upload-input"
+              type="file"
+              accept=".csv,text/csv"
+              className="hidden"
+              onChange={(e) => {
+                const file = e.currentTarget.files?.[0];
+                if (file) void importSalesFile(file);
+                e.currentTarget.value = '';
+              }}
+            />
             <Button type="button" className="h-11 gap-2 rounded-xl font-semibold shadow-sm" onClick={() => setDialogOpen(true)}>
               <Plus className="h-4 w-4" aria-hidden />
               New Sale
@@ -163,20 +308,23 @@ export default function SalesPage() {
                   <TableHead className="ui-table-head py-4">Category</TableHead>
                   <TableHead className="ui-table-head py-4 text-right">Qty</TableHead>
                   <TableHead className="ui-table-head py-4">Customer</TableHead>
+                  <TableHead className="ui-table-head py-4">Phone</TableHead>
+                  <TableHead className="ui-table-head py-4">Address</TableHead>
+                  <TableHead className="ui-table-head py-4">Sale type</TableHead>
                   <TableHead className="ui-table-head py-4 text-right">Amount</TableHead>
-                  <TableHead className="ui-table-head py-4">Status</TableHead>
+                  <TableHead className="ui-table-head py-4">Mode of payment</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
                 {loading ? (
                   <TableRow>
-                    <TableCell colSpan={8} className="py-12 text-center text-muted-foreground">
+                    <TableCell colSpan={11} className="py-12 text-center text-muted-foreground">
                       Loading sales…
                     </TableCell>
                   </TableRow>
                 ) : !rows?.length ? (
                   <TableRow>
-                    <TableCell colSpan={8} className="py-16">
+                    <TableCell colSpan={11} className="py-16">
                       <div className="flex flex-col items-center justify-center gap-2 text-center">
                         <p className="text-sm font-semibold text-foreground">No sales yet</p>
                         <p className="text-sm text-muted-foreground">Record your first sale with New Sale.</p>
@@ -203,7 +351,10 @@ export default function SalesPage() {
                         </Badge>
                       </TableCell>
                       <TableCell className="text-right tabular-nums text-sm">{r.lineSummary.totalQty}</TableCell>
-                      <TableCell className="max-w-[120px] truncate text-sm">{r.sale.customer_name}</TableCell>
+                      <TableCell className="max-w-[140px] truncate text-sm">{r.sale.customer_name ?? '—'}</TableCell>
+                      <TableCell className="max-w-[120px] truncate text-sm">{r.sale.customer_phone ?? '—'}</TableCell>
+                      <TableCell className="max-w-[180px] truncate text-sm">{r.sale.customer_address ?? '—'}</TableCell>
+                      <TableCell className="text-sm">{r.sale.sale_type ?? '—'}</TableCell>
                       <TableCell className="text-right text-sm font-bold tabular-nums">
                         {formatInrDisplay(Number(r.sale.total_amount))}
                       </TableCell>

@@ -56,8 +56,7 @@ export function ExpenseList({
                   <TableHead className="ui-table-head py-4">Date</TableHead>
                   <TableHead className="ui-table-head py-4">Vendor</TableHead>
                   <TableHead className="ui-table-head py-4">Item</TableHead>
-                  <TableHead className="ui-table-head py-4">Stock</TableHead>
-                  <TableHead className="ui-table-head py-4 text-right">Qty</TableHead>
+                  <TableHead className="ui-table-head py-4 text-right">Units</TableHead>
                   <TableHead className="ui-table-head py-4 text-right">Amount</TableHead>
                   <TableHead className="ui-table-head py-4">Payment</TableHead>
                   <TableHead className="ui-table-head py-4 text-right">Actions</TableHead>
@@ -71,15 +70,6 @@ export function ExpenseList({
                     </TableCell>
                     <TableCell className="font-medium text-foreground">{row.vendor_name}</TableCell>
                     <TableCell className="max-w-[140px] truncate text-sm">{row.item_description}</TableCell>
-                    <TableCell>
-                      {row.product_id ? (
-                        <Badge variant="secondary" className="whitespace-nowrap text-[10px] font-bold uppercase">
-                          Stock in
-                        </Badge>
-                      ) : (
-                        <span className="text-muted-foreground">—</span>
-                      )}
-                    </TableCell>
                     <TableCell className="text-right tabular-nums text-sm">{row.quantity}</TableCell>
                     <TableCell className="text-right text-sm font-bold tabular-nums">
                       {formatInrDisplay(Number(row.total_amount))}

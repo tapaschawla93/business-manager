@@ -217,7 +217,10 @@ create table if not exists public.sales (
   id uuid primary key default gen_random_uuid(),
   business_id uuid not null references public.businesses (id) on delete restrict,
   date date not null,
-  customer_name text not null,
+  customer_name text,
+  customer_phone text,
+  customer_address text,
+  sale_type text check (sale_type is null or sale_type in ('B2C', 'B2B', 'B2B2C')),
   payment_mode text not null check (payment_mode in ('cash', 'online')),
   total_amount numeric(10, 2) not null default 0,
   total_cost numeric(10, 2) not null default 0,
@@ -366,7 +369,10 @@ create or replace function public.save_sale(
   p_customer_name text,
   p_payment_mode text,
   p_notes text,
-  p_lines jsonb
+  p_lines jsonb,
+  p_customer_phone text default null,
+  p_customer_address text default null,
+  p_sale_type text default null
 )
 returns jsonb
 language plpgsql
@@ -402,18 +408,21 @@ begin
     raise exception 'Invalid payment_mode';
   end if;
 
-  if p_lines is null or jsonb_typeof(p_lines) <> 'array' or jsonb_array_length(p_lines) = 0 then
-    raise exception 'At least one line item required';
+  if p_sale_type is not null and p_sale_type not in ('B2C', 'B2B', 'B2B2C') then
+    raise exception 'Invalid sale_type';
   end if;
 
-  if coalesce(trim(p_customer_name), '') = '' then
-    raise exception 'customer_name required';
+  if p_lines is null or jsonb_typeof(p_lines) <> 'array' or jsonb_array_length(p_lines) = 0 then
+    raise exception 'At least one line item required';
   end if;
 
   insert into public.sales (
     business_id,
     date,
     customer_name,
+    customer_phone,
+    customer_address,
+    sale_type,
     payment_mode,
     total_amount,
     total_cost,
@@ -422,7 +431,10 @@ begin
   ) values (
     v_bid,
     p_date,
-    trim(p_customer_name),
+    nullif(trim(coalesce(p_customer_name, '')), ''),
+    nullif(trim(coalesce(p_customer_phone, '')), ''),
+    nullif(trim(coalesce(p_customer_address, '')), ''),
+    p_sale_type,
     p_payment_mode,
     0,
     0,
@@ -501,8 +513,8 @@ begin
 end;
 $$;
 
-revoke all on function public.save_sale(date, text, text, text, jsonb) from public;
-grant execute on function public.save_sale(date, text, text, text, jsonb) to authenticated;
+revoke all on function public.save_sale(date, text, text, text, jsonb, text, text, text) from public;
+grant execute on function public.save_sale(date, text, text, text, jsonb, text, text, text) to authenticated;
 
 -- -----------------------------------------------------------------------------
 -- Archive RPCs (SECURITY DEFINER — tenant check via profiles, then UPDATE bypasses RLS)

@@ -85,6 +85,9 @@ export function SalesForm({ onSaved, compact }: { onSaved?: () => void; compact?
   const [loadingProducts, setLoadingProducts] = useState(true);
   const [date, setDate] = useState(todayLocalISODate);
   const [customerName, setCustomerName] = useState('');
+  const [customerPhone, setCustomerPhone] = useState('');
+  const [customerAddress, setCustomerAddress] = useState('');
+  const [saleType, setSaleType] = useState<'B2C' | 'B2B' | 'B2B2C' | ''>('');
   const [paymentMode, setPaymentMode] = useState<'cash' | 'online'>('cash');
   const [notes, setNotes] = useState('');
   const [lines, setLines] = useState<LineDraft[]>([emptyLine()]);
@@ -202,11 +205,6 @@ export function SalesForm({ onSaved, compact }: { onSaved?: () => void; compact?
       setError('Add at least one line with product, quantity, and sale price.');
       return;
     }
-    if (!customerName.trim()) {
-      setError('Customer name is required.');
-      return;
-    }
-
     const payload = ready.map((l) => ({
       product_id: l.productId,
       quantity: Number(l.quantity),
@@ -217,7 +215,10 @@ export function SalesForm({ onSaved, compact }: { onSaved?: () => void; compact?
     setSaving(true);
     const { data, error: rpcErr } = await supabase.rpc('save_sale', {
       p_date: date,
-      p_customer_name: customerName.trim(),
+      p_customer_name: customerName.trim() === '' ? null : customerName.trim(),
+      p_customer_phone: customerPhone.trim() === '' ? null : customerPhone.trim(),
+      p_customer_address: customerAddress.trim() === '' ? null : customerAddress.trim(),
+      p_sale_type: saleType === '' ? null : saleType,
       p_payment_mode: paymentMode,
       p_notes: notes.trim() === '' ? null : notes.trim(),
       p_lines: payload,
@@ -241,6 +242,9 @@ export function SalesForm({ onSaved, compact }: { onSaved?: () => void; compact?
       );
     }
     setCustomerName('');
+    setCustomerPhone('');
+    setCustomerAddress('');
+    setSaleType('');
     setNotes('');
     setLines([emptyLine()]);
     void loadProducts();
@@ -253,25 +257,6 @@ export function SalesForm({ onSaved, compact }: { onSaved?: () => void; compact?
       onSubmit={handleSubmit}
       className={compact ? 'space-y-5' : 'mx-auto max-w-lg space-y-5'}
     >
-      <Card>
-        <CardContent className="space-y-4 p-4">
-          <div className="grid gap-3">
-            <div className="space-y-1">
-              <Label>Date</Label>
-              <Input type="date" value={date} onChange={(e) => setDate(e.target.value)} />
-            </div>
-            <div className="space-y-1">
-              <Label>Customer name</Label>
-              <Input value={customerName} onChange={(e) => setCustomerName(e.target.value)} required />
-            </div>
-            <div className="space-y-1">
-              <Label>Payment method</Label>
-              <PaymentToggle value={paymentMode} onChange={setPaymentMode} />
-            </div>
-          </div>
-        </CardContent>
-      </Card>
-
       <div>
         <h2 className="text-sm font-semibold text-foreground">Line items</h2>
         {loadingProducts ? (
@@ -280,15 +265,15 @@ export function SalesForm({ onSaved, compact }: { onSaved?: () => void; compact?
           <>
             {lines.map((line, idx) => (
               <div key={line.localId} className="mt-3 space-y-2">
-                <ProductLineRow
-                  line={line}
-                  onChange={(next) => setLine(line.localId, next)}
-                  onRemove={() => removeLine(line.localId)}
-                />
                 <ProductPicker
                   products={products}
                   triggerLabel={line.productId ? line.label : undefined}
                   onPick={(p) => onPickProduct(line.localId, p)}
+                />
+                <ProductLineRow
+                  line={line}
+                  onChange={(next) => setLine(line.localId, next)}
+                  onRemove={() => removeLine(line.localId)}
                 />
                 {idx < lines.length - 1 && <Separator className="my-3" />}
               </div>
@@ -299,6 +284,54 @@ export function SalesForm({ onSaved, compact }: { onSaved?: () => void; compact?
           </>
         )}
       </div>
+
+      <Card>
+        <CardContent className="space-y-4 p-4">
+          <div className="grid gap-3">
+            <div className="space-y-1">
+              <Label>Sale type (optional)</Label>
+              <div className="grid grid-cols-3 gap-2">
+                {(['B2C', 'B2B', 'B2B2C'] as const).map((t) => (
+                  <Button
+                    key={t}
+                    type="button"
+                    variant={saleType === t ? 'default' : 'outline'}
+                    className="h-9"
+                    onClick={() => setSaleType((prev) => (prev === t ? '' : t))}
+                  >
+                    {t}
+                  </Button>
+                ))}
+              </div>
+            </div>
+            <div className="space-y-1">
+              <Label>Payment method</Label>
+              <PaymentToggle value={paymentMode} onChange={setPaymentMode} />
+            </div>
+            <div className="space-y-1">
+              <Label>Customer name (optional)</Label>
+              <Input value={customerName} onChange={(e) => setCustomerName(e.target.value)} />
+            </div>
+            <div className="space-y-1">
+              <Label>Customer phone (optional)</Label>
+              <Input
+                value={customerPhone}
+                onChange={(e) => setCustomerPhone(e.target.value)}
+                inputMode="tel"
+                placeholder="e.g. 9876543210"
+              />
+            </div>
+            <div className="space-y-1">
+              <Label>Customer address (optional)</Label>
+              <Input value={customerAddress} onChange={(e) => setCustomerAddress(e.target.value)} />
+            </div>
+            <div className="space-y-1">
+              <Label>Date</Label>
+              <Input type="date" value={date} onChange={(e) => setDate(e.target.value)} />
+            </div>
+          </div>
+        </CardContent>
+      </Card>
 
       <div className="space-y-1">
         <Label>Notes (optional)</Label>

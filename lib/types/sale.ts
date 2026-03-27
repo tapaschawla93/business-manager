@@ -3,7 +3,10 @@ export type Sale = {
   id: string;
   business_id: string;
   date: string;
-  customer_name: string;
+  customer_name: string | null;
+  customer_phone: string | null;
+  customer_address: string | null;
+  sale_type: 'B2C' | 'B2B' | 'B2B2C' | null;
   payment_mode: 'cash' | 'online';
   total_amount: number;
   total_cost: number;

@@ -2,7 +2,18 @@ import type { SupabaseClient } from '@supabase/supabase-js';
 import type { Sale } from '@/lib/types/sale';
 
 export type SaleListRow = {
-  sale: Pick<Sale, 'id' | 'date' | 'customer_name' | 'total_amount' | 'payment_mode' | 'created_at'>;
+  sale: Pick<
+    Sale,
+    | 'id'
+    | 'date'
+    | 'customer_name'
+    | 'customer_phone'
+    | 'customer_address'
+    | 'sale_type'
+    | 'total_amount'
+    | 'payment_mode'
+    | 'created_at'
+  >;
   lineSummary: {
     primaryProduct: string;
     primaryCategory: string;
@@ -17,7 +28,7 @@ export async function fetchSalesList(supabase: SupabaseClient): Promise<{
 }> {
   const { data: sales, error: e1 } = await supabase
     .from('sales')
-    .select('id, date, customer_name, total_amount, payment_mode, created_at')
+    .select('id, date, customer_name, customer_phone, customer_address, sale_type, total_amount, payment_mode, created_at')
     .is('deleted_at', null)
     .order('created_at', { ascending: false });
 

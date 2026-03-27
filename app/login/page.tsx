@@ -33,6 +33,8 @@ export default function LoginPage() {
         if (!onboardError) {
           router.replace('/');
           router.refresh();
+        } else {
+          setError(onboardError.message);
         }
       }
     }
@@ -47,6 +49,8 @@ export default function LoginPage() {
         if (!onboardError) {
           router.replace('/');
           router.refresh();
+        } else if (event === 'SIGNED_IN') {
+          setError(onboardError.message);
         }
       }
     });
@@ -178,7 +182,11 @@ export default function LoginPage() {
               </div>
 
               {info && <p className="text-xs text-muted-foreground">{info}</p>}
-              {error && <p className="text-xs text-destructive">{error}</p>}
+              {error && (
+                <p className="whitespace-pre-wrap break-words text-sm text-destructive" role="alert">
+                  {error}
+                </p>
+              )}
 
               <Button type="submit" size="full" disabled={loading} className="h-12 rounded-xl text-base font-semibold">
                 {loading

@@ -88,7 +88,8 @@ export async function getDashboardKPIs(
   const r = row as Record<string, unknown>;
   const total_revenue = asFiniteNumber(r.total_revenue);
   const total_expenses = asFiniteNumber(r.total_expenses);
-  const inventory_value = asFiniteNumber(r.inventory_value);
+  // Older `get_dashboard_kpis` (e.g. before inventory migration) omits this column; treat as 0.
+  const inventory_value = asFiniteNumber(r.inventory_value) ?? 0;
   const gross_profit = asFiniteNumber(r.gross_profit);
   const cash_in_hand = asFiniteNumber(r.cash_in_hand);
   const online_received = asFiniteNumber(r.online_received);
@@ -98,7 +99,6 @@ export async function getDashboardKPIs(
   if (
     total_revenue === null ||
     total_expenses === null ||
-    inventory_value === null ||
     gross_profit === null ||
     cash_in_hand === null ||
     online_received === null ||

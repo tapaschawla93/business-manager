@@ -1,28 +1,16 @@
 'use client';
 
-import { FormEvent, useCallback, useEffect, useMemo, useState, type ReactNode } from 'react';
+import { FormEvent, useEffect, useMemo, useState, type ReactNode } from 'react';
 import { toast } from 'sonner';
-import { Plus } from 'lucide-react';
 import { PaymentToggle } from '@/components/PaymentToggle';
 import { formatInrDisplay } from '@/lib/formatInr';
 import { getSupabaseClient } from '@/lib/supabaseClient';
 import type { Expense } from '@/lib/types/expense';
-import type { Product } from '@/lib/types/product';
-import type { Vendor } from '@/lib/types/vendor';
-import { fetchActiveVendors } from '@/lib/queries/vendors';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Card, CardContent } from '@/components/ui/card';
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogHeader,
-  DialogTitle,
-} from '@/components/ui/dialog';
-import { VendorPicker } from '@/components/VendorPicker';
-import { ProductPicker } from '@/app/sales/components/ProductPicker';
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 
 function nowDatetimeLocal(): string {
   const d = new Date();
@@ -76,74 +64,34 @@ export function ExpenseForm({
   onSaved: () => void | Promise<void>;
 }) {
   const [vendorName, setVendorName] = useState('');
-  const [vendorId, setVendorId] = useState<string | null>(null);
   const [itemDescription, setItemDescription] = useState('');
   const [quantity, setQuantity] = useState('1');
   const [unitCost, setUnitCost] = useState('');
   const [paymentMode, setPaymentMode] = useState<'cash' | 'online'>('cash');
   const [notes, setNotes] = useState('');
   const [dateLocal, setDateLocal] = useState(nowDatetimeLocal);
-  const [productId, setProductId] = useState<string | null>(null);
-  const [productTriggerLabel, setProductTriggerLabel] = useState<string | undefined>(undefined);
-  const [vendors, setVendors] = useState<Vendor[]>([]);
-  const [products, setProducts] = useState<Product[]>([]);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [vendorDialogOpen, setVendorDialogOpen] = useState(false);
-  const [newVendorName, setNewVendorName] = useState('');
-  const [newVendorPhone, setNewVendorPhone] = useState('');
-  const [addingVendor, setAddingVendor] = useState(false);
-
-  const loadCatalog = useCallback(async () => {
-    const supabase = getSupabaseClient();
-    const [vRes, pRes] = await Promise.all([
-      fetchActiveVendors(supabase, { businessId }),
-      supabase.from('products').select('*').is('deleted_at', null).order('name', { ascending: true }),
-    ]);
-    if (!vRes.error && vRes.data) setVendors(vRes.data);
-    if (!pRes.error && pRes.data) setProducts(pRes.data as Product[]);
-  }, [businessId]);
-
-  useEffect(() => {
-    void loadCatalog();
-  }, [loadCatalog]);
 
   useEffect(() => {
     if (editing) {
       setVendorName(editing.vendor_name);
-      setVendorId(editing.vendor_id ?? null);
       setItemDescription(editing.item_description);
       setQuantity(String(editing.quantity));
       setUnitCost(String(editing.unit_cost));
       setPaymentMode(editing.payment_mode);
       setNotes(editing.notes ?? '');
       setDateLocal(expenseToDatetimeLocal(editing.date));
-      setProductId(editing.product_id ?? null);
       return;
     }
     setVendorName('');
-    setVendorId(null);
     setItemDescription('');
     setQuantity('1');
     setUnitCost('');
     setPaymentMode('cash');
     setNotes('');
     setDateLocal(nowDatetimeLocal());
-    setProductId(null);
-    setProductTriggerLabel(undefined);
   }, [editing]);
-
-  useEffect(() => {
-    if (!editing) return;
-    if (!editing.product_id) {
-      setProductTriggerLabel(undefined);
-      return;
-    }
-    const p = products.find((x) => x.id === editing.product_id);
-    setProductTriggerLabel(
-      p ? p.name + (p.variant ? ` (${p.variant})` : '') : editing.item_description,
-    );
-  }, [editing, products]);
 
   const totalPreview = useMemo(() => {
     const q = Number(quantity);
@@ -151,46 +99,6 @@ export function ExpenseForm({
     if (!Number.isFinite(q) || !Number.isFinite(u)) return null;
     return Math.round(q * u * 100) / 100;
   }, [quantity, unitCost]);
-
-  function clearLinkedProduct() {
-    setProductId(null);
-    setProductTriggerLabel(undefined);
-  }
-
-  async function handleQuickAddVendor(e: FormEvent) {
-    e.preventDefault();
-    const name = newVendorName.trim();
-    if (!name) {
-      toast.error('Vendor name is required');
-      return;
-    }
-    const supabase = getSupabaseClient();
-    setAddingVendor(true);
-    const { data, error: insErr } = await supabase
-      .from('vendors')
-      .insert({
-        business_id: businessId,
-        name,
-        phone: newVendorPhone.trim() === '' ? null : newVendorPhone.trim(),
-        email: null,
-        notes: null,
-      })
-      .select('id, name')
-      .single();
-    setAddingVendor(false);
-    if (insErr) {
-      toast.error(insErr.message);
-      return;
-    }
-    const row = data as { id: string; name: string };
-    toast.success('Vendor saved');
-    setVendorId(row.id);
-    setVendorName(row.name);
-    setVendorDialogOpen(false);
-    setNewVendorName('');
-    setNewVendorPhone('');
-    await loadCatalog();
-  }
 
   async function handleSubmit(e: FormEvent) {
     e.preventDefault();
@@ -220,9 +128,7 @@ export function ExpenseForm({
     const common = {
       date: dateIso,
       vendor_name: vendorName.trim(),
-      vendor_id: vendorId,
       item_description: itemDescription.trim(),
-      product_id: productId,
       quantity: q,
       unit_cost: u,
       total_amount: totalAmount,
@@ -259,14 +165,12 @@ export function ExpenseForm({
       }
       toast.success('Expense added');
       setVendorName('');
-      setVendorId(null);
       setItemDescription('');
       setQuantity('1');
       setUnitCost('');
       setPaymentMode('cash');
       setNotes('');
       setDateLocal(nowDatetimeLocal());
-      clearLinkedProduct();
     }
 
     await onSaved();
@@ -288,63 +192,14 @@ export function ExpenseForm({
                 />
               </Field>
               <div className="space-y-1 sm:col-span-2">
-                <div className="flex items-center justify-between gap-2">
-                  <Label className="text-xs">Vendor *</Label>
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    size="sm"
-                    className="h-7 gap-1 text-xs text-primary"
-                    onClick={() => setVendorDialogOpen(true)}
-                  >
-                    <Plus className="h-3.5 w-3.5" />
-                    New vendor
-                  </Button>
-                </div>
-                {vendors.length > 0 ? (
-                  <VendorPicker
-                    vendors={vendors}
-                    triggerLabel={vendorId ? vendorName : undefined}
-                    onPick={(v) => {
-                      setVendorId(v.id);
-                      setVendorName(v.name);
-                    }}
-                    onClear={() => {
-                      setVendorId(null);
-                    }}
-                  />
-                ) : null}
+                <Label className="text-xs">Vendor *</Label>
                 <Input
                   value={vendorName}
-                  onChange={(e) => {
-                    setVendorName(e.target.value);
-                    setVendorId(null);
-                  }}
+                  onChange={(e) => setVendorName(e.target.value)}
                   placeholder="Vendor name"
                   required
                   className="mt-1.5"
                 />
-              </div>
-              <div className="space-y-1 sm:col-span-2 rounded-lg border border-dashed border-primary/25 bg-accent/30 p-3">
-                <Label className="text-xs font-medium text-foreground">Receive into inventory (optional)</Label>
-                <p className="text-[11px] text-muted-foreground">
-                  Link a catalogue product to increase on-hand units by the quantity below.
-                </p>
-                <ProductPicker
-                  products={products}
-                  triggerLabel={productTriggerLabel}
-                  onPick={(p) => {
-                    setProductId(p.id);
-                    setProductTriggerLabel(p.name + (p.variant ? ` (${p.variant})` : ''));
-                    setItemDescription(p.name + (p.variant ? ` (${p.variant})` : ''));
-                    setUnitCost(String(p.cost_price));
-                  }}
-                />
-                {productId ? (
-                  <Button type="button" variant="outline" size="sm" className="mt-2" onClick={clearLinkedProduct}>
-                    Unlink product
-                  </Button>
-                ) : null}
               </div>
               <Field label="Item" required>
                 <Input value={itemDescription} onChange={(e) => setItemDescription(e.target.value)} required />
@@ -404,25 +259,6 @@ export function ExpenseForm({
         </div>
       </form>
 
-      <Dialog open={vendorDialogOpen} onOpenChange={setVendorDialogOpen}>
-        <DialogContent className="sm:max-w-md">
-          <DialogHeader>
-            <DialogTitle>Add vendor</DialogTitle>
-            <DialogDescription>Creates a contact you can reuse on future expenses.</DialogDescription>
-          </DialogHeader>
-          <form onSubmit={(e) => void handleQuickAddVendor(e)} className="space-y-3">
-            <Field label="Name" required>
-              <Input value={newVendorName} onChange={(e) => setNewVendorName(e.target.value)} required />
-            </Field>
-            <Field label="Phone (optional)">
-              <Input value={newVendorPhone} onChange={(e) => setNewVendorPhone(e.target.value)} />
-            </Field>
-            <Button type="submit" size="full" disabled={addingVendor}>
-              {addingVendor ? 'Saving…' : 'Save vendor'}
-            </Button>
-          </form>
-        </DialogContent>
-      </Dialog>
     </>
   );
 }

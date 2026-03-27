@@ -6,8 +6,11 @@ All notable changes to this project are documented here. Format loosely follows 
 
 ### Added
 
-- **UI Overhaul (V1):** shadcn-style components under `components/ui/` (Button, Card, Input, Table, Dialog, Sheet, Popover, Command, AlertDialog, Sonner, etc.), **`#16a34a`** primary tokens in `globals.css`, **`AppChrome` / `AppShell`** with **240px sidebar** (desktop) and **64px bottom nav** (mobile), **`Fab`** on Products + Expenses. **BizManager** branding in sidebar. **Sonner** toasts; archive confirmations via **AlertDialog** (replaces `window.confirm`). Login remains **minimal centered card** (no shell). Sales **product search** uses **Popover + cmdk** (same client product list as before).
+- **UI Overhaul (V1):** shadcn-style components under `components/ui/` (Button, Card, Input, Table, Dialog, Sheet, Popover, Command, AlertDialog, Sonner, etc.), **`#16a34a`** primary tokens in `globals.css`, **`AppChrome` / `AppShell`** with **240px sidebar** (desktop) and **64px bottom nav** (mobile), **`Fab`** on Products + Expenses. **BizManager** branding in sidebar. **Sonner** toasts; archive confirmations via **Dialog/AlertDialog** (replaces `window.confirm`). Login remains **minimal centered card** (no shell). Sales **product search** uses **Popover + cmdk** (same client product list as before).
 - Added `components/layout/Sidebar.tsx` (standalone desktop sidebar component): fixed 240px rail, nav icons, active-state styling, user badge, and logout action. Not wired by default.
+- **Bulk upload hub (Settings):** Added CSV template download + CSV upload for **Products**, **Expenses**, and **Sales** (`sale_ref` grouped line-item format). Imports support partial success and downloadable error CSV reports.
+- Added shared CSV import helpers in `lib/importCsv.ts` (parse, typed getters, error report CSV builder).
+- Added module-level bulk controls on **Products**, **Sales**, and **Expenses** screens (Template + Bulk Upload) in addition to Settings.
 
 - Multi-tenant shell: `businesses` + `profiles`, `create_business_for_user` onboarding RPC, `current_business_id()` for RLS.
 - **Products** (`/products`): CRUD, optional `variant`, ₹ display via `formatInrDisplay`, soft archive (`deleted_at`); archive via **`archive_product` RPC** (client calls RPC, not raw update).
@@ -25,6 +28,11 @@ All notable changes to this project are documented here. Format loosely follows 
 - Login: sign-in / sign-up aligned with onboarding RPC; email-confirmation path documented in UI.
 - `save_sale` final `UPDATE sales` includes `business_id` guard (migration + schema).
 - **Products** (`app/products/page.tsx`) UI rebuilt to shadcn dashboard layout: new header + CTA, searchable table (Name/Category/MRP/Cost/Margin%/Actions), color-coded margin %, centered empty state, dialog-based add/edit + archive confirmation, and toast-based feedback. Supabase reads/writes/RPC flow unchanged.
+- **Sales schema/RPC contract:** `sales.customer_name` is now nullable; optional `customer_phone`, `customer_address`, and `sale_type` (`B2C`/`B2B`/`B2B2C`) added. `save_sale` now accepts optional customer fields and optional sale type.
+- **Sales UI:** New Sale form now supports optional customer name/phone/address and optional sale type; Sales list header renamed from **Status** to **Mode of payment**.
+- **Sales UI flow:** In New Sale, line entry now starts with product search, followed by qty/price, then add-more; sale/customer/date details remain below line items.
+- Removed redundant per-page export CTA/buttons from **Sales** and **Expenses** pages; Settings remains the centralized export surface.
+- **Expenses form behavior:** Write path now uses free-text `vendor_name` only (no `vendor_id` linkage in saves/updates) to stay compatible with current schema.
 
 ### Fixed
 
@@ -32,6 +40,10 @@ All notable changes to this project are documented here. Format loosely follows 
 - **Soft-delete UX**: archive no longer chains `.select()` after update (RETURNING vs SELECT RLS on archived rows); products/expenses archive use definer RPCs for reliable `deleted_at`.
 - **Sales form**: removing the only line resets to a fresh empty line; **`save_sale`** JSON response validated before showing ₹ totals (amber fallback if payload incomplete).
 - **Dashboard**: bad or unparseable **`get_top_products`** JSONB → returned **error** (surface in UI), not silent empty top-product tables; string JSONB coerced via `JSON.parse` when needed.
+- **Expense edit runtime errors**: removed writes to missing `product_id`/`vendor_id` schema columns from expense form flow.
+- **Expense list table semantics**: replaced confusing `Stock` column with `Units` and bound it to entered quantity values.
+- **Bulk import reliability**: Products/Expenses imports now insert row-by-row for true partial success; one bad row no longer blocks all valid rows.
+- **Bulk import date handling**: accepts historical/present/future dates with flexible input formats; rejects impossible calendar dates via strict normalization.
 
 ### Security
 
