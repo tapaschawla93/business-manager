@@ -22,6 +22,13 @@ import {
 } from '@/lib/importCsv';
 import { Input } from '@/components/ui/input';
 import type { Product } from '@/lib/types/product';
+import { importInventoryCsvRows, inventoryImportIssuesCsv } from '@/lib/inventory/importInventoryCsv';
+import {
+  buildProductLookupMap,
+  PRODUCT_LOOKUP_AMBIGUOUS_MESSAGE,
+  resolveProductLookup,
+  type ProductLookupResolution,
+} from '@/lib/productLookupMap';
 
 /**
  * Export active tenant data only (deleted_at IS NULL). Client-side CSV; no server.
@@ -233,6 +240,22 @@ export default function SettingsPage() {
     downloadCsv('template_sales.csv', rowsToCsv(headers, rows));
   }
 
+  function downloadTemplateInventory() {
+    const headers = ['name', 'unit', 'current_stock', 'unit_cost', 'reorder_level', 'product_lookup', 'add_to_products'];
+    const rows = [
+      {
+        name: 'Grow bags 5kg',
+        unit: 'pcs',
+        current_stock: '100',
+        unit_cost: '12',
+        reorder_level: '20',
+        product_lookup: '',
+        add_to_products: 'false',
+      },
+    ];
+    downloadCsv('template_inventory.csv', rowsToCsv(headers, rows));
+  }
+
   async function readFileText(file: File): Promise<string> {
     return await file.text();
   }
@@ -393,13 +416,7 @@ export default function SettingsPage() {
     }
 
     const products = (productRows ?? []) as Pick<Product, 'id' | 'name' | 'variant'>[];
-    const productMap = new Map<string, string>();
-    for (const p of products) {
-      productMap.set(p.name.trim().toLowerCase(), p.id);
-      if (p.variant && p.variant.trim() !== '') {
-        productMap.set(`${p.name.trim().toLowerCase()}::${p.variant.trim().toLowerCase()}`, p.id);
-      }
-    }
+    const lookupIndex = buildProductLookupMap(products);
 
     type SaleGroup = {
       rowNos: number[];
@@ -422,7 +439,11 @@ export default function SettingsPage() {
       const date = normalizeDateYmd(dateRaw);
       const paymentMode = getString(r, 'payment_mode').toLowerCase();
       const saleTypeRaw = getString(r, 'sale_type').toUpperCase();
-      const lookup = getString(r, 'product_lookup').toLowerCase();
+      const lookupStr = getString(r, 'product_lookup');
+      const resolved: ProductLookupResolution = lookupStr
+        ? resolveProductLookup(lookupIndex, lookupStr)
+        : { productId: null, ambiguous: false };
+      const productId = resolved.productId;
       const qty = getRequiredNumber(r, 'quantity');
       const salePrice = getRequiredNumber(r, 'sale_price');
 
@@ -437,8 +458,9 @@ export default function SettingsPage() {
       if (qty === null || qty <= 0) issues.push({ row: rowNo, field: 'quantity', message: 'must be > 0' });
       if (salePrice === null || salePrice < 0) issues.push({ row: rowNo, field: 'sale_price', message: 'must be >= 0' });
 
-      const productId = productMap.get(lookup);
-      if (!lookup || !productId) {
+      if (resolved.ambiguous) {
+        issues.push({ row: rowNo, field: 'product_lookup', message: PRODUCT_LOOKUP_AMBIGUOUS_MESSAGE });
+      } else if (!lookupStr || !productId) {
         issues.push({ row: rowNo, field: 'product_lookup', message: 'no matching active product' });
       }
 
@@ -510,6 +532,45 @@ export default function SettingsPage() {
     }
     setImportResult(`Sales import: inserted ${inserted} sales, failed ${issues.length} rows.`);
     toast.success(`Sales import complete: ${inserted} sales inserted.`);
+  }
+
+  async function importInventory(file: File) {
+    clearImportResult();
+    setBusy('import-inventory');
+    const supabase = getSupabaseClient();
+    const { data: profile } = await supabase.from('profiles').select('business_id').single();
+    const businessId = profile?.business_id as string | undefined;
+    if (!businessId) {
+      setBusy(null);
+      toast.error('No business profile');
+      return;
+    }
+
+    const text = await readFileText(file);
+    const { rows } = parseCsv(text);
+    const { data: productRows, error: pErr } = await supabase
+      .from('products')
+      .select('id, name, variant')
+      .is('deleted_at', null);
+    if (pErr) {
+      setBusy(null);
+      toast.error(pErr.message);
+      return;
+    }
+
+    const result = await importInventoryCsvRows(
+      supabase,
+      businessId,
+      rows,
+      (productRows ?? []) as Pick<Product, 'id' | 'name' | 'variant'>[],
+    );
+
+    setBusy(null);
+    if (result.issues.length) {
+      downloadCsv('inventory_import_errors.csv', inventoryImportIssuesCsv(result.issues));
+    }
+    setImportResult(`Inventory import: inserted ${result.inserted}, issues ${result.issues.length}.`);
+    toast.success(`Inventory import complete: ${result.inserted} inserted.`);
   }
 
   if (!ready) {
@@ -637,6 +698,30 @@ export default function SettingsPage() {
                 onChange={(e) => {
                   const f = e.target.files?.[0];
                   if (f) void importSales(f);
+                  e.currentTarget.value = '';
+                }}
+              />
+            </div>
+          </div>
+
+          <div className="space-y-2">
+            <p className="text-sm font-semibold">Inventory</p>
+            <p className="text-xs text-muted-foreground">
+              Use <code>product_lookup</code> (name or name::variant) or <code>add_to_products</code> /{' '}
+              <code>add_to_section</code> true to create a stub product.
+            </p>
+            <div className="flex flex-col gap-2 sm:flex-row">
+              <Button type="button" variant="outline" onClick={downloadTemplateInventory}>
+                <Download className="mr-2 h-4 w-4" />
+                Download Template
+              </Button>
+              <Input
+                type="file"
+                accept=".csv,text/csv"
+                disabled={busy !== null}
+                onChange={(e) => {
+                  const f = e.target.files?.[0];
+                  if (f) void importInventory(f);
                   e.currentTarget.value = '';
                 }}
               />

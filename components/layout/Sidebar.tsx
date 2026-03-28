@@ -11,6 +11,7 @@ import {
   Settings,
   ShoppingCart,
   Truck,
+  Warehouse,
 } from 'lucide-react';
 import { getSupabaseClient } from '@/lib/supabaseClient';
 import { cn } from '@/lib/utils';
@@ -28,6 +29,7 @@ const NAV_ITEMS: NavItem[] = [
   { href: '/sales', label: 'Sales', Icon: ShoppingCart },
   { href: '/expenses', label: 'Expenses', Icon: ArrowDownCircle },
   { href: '/vendors', label: 'Vendors', Icon: Truck },
+  { href: '/inventory', label: 'Inventory', Icon: Warehouse },
   { href: '/settings', label: 'Settings', Icon: Settings },
 ];
 

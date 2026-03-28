@@ -38,6 +38,7 @@
 | `prd.v2.4.3` | Manual Inventory (V2) |
 | `prd.v2.4.4` | Dashboard v2 additions |
 | `prd.v2.4.5` | V2 Data Model — additions |
+| `prd.v2.mobile-polish` | Mobile Polish — Post V2 (Sales accordion rows) |
 | `prd.v3` | Version 3 — Full Automation (full) |
 | `prd.v3.5.1` — `prd.v3.5.7` | V3 features & data model |
 | `prd.6` | Full data model (all versions) |
@@ -272,6 +273,50 @@ Ship **one execution module at a time**. Each module is **complete**: migrations
 **Suggested order:** **M1 → M2 → M3** (vendors before dashboard splits that might reference vendor dimensions later; inventory before any V3 bridge).
 
 **Implementation note:** The current codebase may use table names like `inventory` / `products` joins — align migrations with **`prd.6`** and `prd.v2.4.5` naming (**inventory_items**, **vendors**) or document a deliberate mapping in the module ticket.
+
+---
+
+## `prd.v2.mobile-polish` — Mobile Polish — Post V2
+
+**Theme:** Replace horizontal-scroll data tables on mobile with touch-native expandable rows — no information loss, no side-scrolling.
+
+### Sales table — expandable accordion rows
+
+**Problem:** The current sales table requires horizontal scrolling on mobile to see all columns, which is a poor experience at a stall or on the go.
+
+**Solution:** On mobile, replace the table with **accordion-style rows** where each sale is a single tappable card.
+
+#### Collapsed state (always visible)
+| Field | Notes |
+|-------|-------|
+| Order # / Sale ID (short) | Reference for quick lookup |
+| Customer name | Who bought |
+| Total amount | ₹ value, prominent |
+| Payment badge | `cash` / `online` pill |
+
+#### Expanded state (revealed on tap)
+| Field | Notes |
+|-------|-------|
+| Products sold | Name + variant per line item |
+| Qty | Units per product |
+| Sale price | What was charged |
+| Cost | Snapshot cost at time of sale |
+| Profit | Per line and/or total |
+| vs MRP | Discount or premium vs MRP |
+| Date | Full date + time |
+
+#### Interaction pattern
+- **Full row tap** → toggles expand / collapse (no separate chevron button required, though a caret indicator is shown on the right)
+- Only one row needs to be open at a time (accordion behaviour); or allow multiple — implementation choice
+- Desktop view remains the existing full horizontal table (no change)
+- Breakpoint: apply accordion below `md` (Tailwind `md:hidden` / `hidden md:block` pattern consistent with existing mobile shell)
+
+#### Design rules
+- Collapsed row height: comfortable tap target (min 56 px)
+- Expanded content: indented card or inset panel below the collapsed row, using `bg-muted/40` surface consistent with existing `ProductLineRow` and `Card` patterns
+- Payment badge reuses existing `Badge` component (`variant="outline"` for online, default for cash)
+- Profit shown in `text-finance-positive` / `text-finance-negative` token (same as dashboard KPIs)
+- Animate open/close with a subtle height transition (respect `prefers-reduced-motion`)
 
 ---
 

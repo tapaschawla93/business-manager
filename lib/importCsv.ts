@@ -83,6 +83,17 @@ export function getRequiredNumber(row: CsvRow, key: string): number | null {
   return Number.isFinite(n) ? n : null;
 }
 
+/** True for common CSV truthy tokens (case-insensitive). */
+export function getCsvBoolean(row: CsvRow, key: string): boolean {
+  const v = getString(row, key).toLowerCase();
+  return v === 'true' || v === '1' || v === 'yes' || v === 'y';
+}
+
+/** `add_to_products` or user-facing `add_to_section`. */
+export function getAddToProductsFlag(row: CsvRow): boolean {
+  return getCsvBoolean(row, 'add_to_products') || getCsvBoolean(row, 'add_to_section');
+}
+
 export function buildImportIssuesCsv(issues: ImportIssue[]): string {
   const header = 'row,field,message';
   const lines = issues.map((i) => `${i.row},${escapeCell(i.field)},${escapeCell(i.message)}`);

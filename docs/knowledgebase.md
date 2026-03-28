@@ -232,5 +232,84 @@
 
 ### Level 3
 
-- **Migration**: `20260327200000_vendors_contact_address.sql` adds nullable text columns; no policy changes.
-- **Greenfield `schema.sql`**: Includes full `vendors` table + `expenses.vendor_id` / `expenses.product_id` FKs for consistency with inventory migration track.
+- **Migration `20260327200000_vendors_contact_address.sql`** (evolved from ALTER-only):
+  - **Problem**: An `ALTER TABLE vendors …` migration **fails** if `public.vendors` was never created (e.g. `20260326120000_inventory_vendors.sql` not applied on that database).
+  - **Pattern shipped**: `CREATE TABLE IF NOT EXISTS` with the **baseline** directory shape (name, phone, email, notes, timestamps, unique `(business_id, name)`), then `ADD COLUMN IF NOT EXISTS` for `contact_person` / `address`, then RLS + trigger parity with the inventory migration’s vendors section.
+  - **Expenses**: `ADD COLUMN IF NOT EXISTS` for `vendor_id` (and `product_id` so `expenses_validate_refs` can reference both), indexes, and **idempotent** `CREATE OR REPLACE` + trigger for `expenses_validate_refs`. Does **not** replace inventory-only pieces (`inventory` table, `expenses_sync_inventory`, `save_sale` stock)—those stay in `20260326120000` when you need stock.
+- **Greenfield `schema.sql`**: Includes full `vendors` table + `expenses.vendor_id` / `expenses.product_id` FKs for consistency with the inventory track.
+
+### Navigation (shell) — single source
+
+- **`lib/nav.ts`**: Exports `MAIN_NAV_ITEMS` and `isMainNavActive()`. **`AppShell`** (desktop sidebar) and **`MobileBottomNav`** both import **only** this module, so adding a route (e.g. `/vendors`, **`/inventory` last**) updates **two surfaces with one edit**.
+- **`components/layout/Sidebar.tsx`**: Older standalone spec; **not** wired by `AppChrome` today—if reused, keep its `NAV_ITEMS` aligned with `MAIN_NAV_ITEMS` or delete to avoid drift.
+
+### Local development — Next.js dev server
+
+- **Symptom**: `http://localhost:3000` returns **HTTP 500** while the same app on another port (e.g. `npm run dev -- -p 3010`) returns **200**.
+- **Likely cause**: Stale **`.next`** cache, a **zombie `node`** still bound to the port, or a crashed/half-dead dev process—not necessarily application logic.
+- **Mitigation**: Kill listeners on the port (`lsof -ti :3000 | xargs kill -9` on macOS), **`rm -rf .next`**, run **`npm run dev`**, open the exact **Local:** URL printed in the terminal (use `http`, not `https`).
+
+---
+
+## Manual inventory (`inventory_items`, prd.v2.4.3)
+
+### Level 1
+
+- **`public.inventory`**: Ledger per product; **sales** and **expenses** automation adjusts **`quantity_on_hand`** here (not `current_stock` — that name is on **`inventory_items`** only).
+- **`public.inventory_items`**: Operator-facing lines (display name, unit, **`unit_cost`**, **`reorder_level`**, optional **`product_id`**). Rows **without** **`product_id`** do not receive sale/expense stock deltas.
+- **Sync**: When **`product_id`** is set, triggers keep **`inventory_items.current_stock`** and **`public.inventory.quantity_on_hand`** aligned (bidirectional; loop avoided by comparing old/new with **`IS DISTINCT FROM`**). Sales must call **`inventory_apply_delta`** inside **`save_sale`** so the ledger moves; migration **`20260329103000_save_sale_restore_inventory_delta.sql`** restores that if an older **`save_sale`** rewrite dropped it.
+
+### Level 2
+
+- **CSV** (`template_inventory.csv`): `name`, `unit`, `current_stock`, `unit_cost`, `reorder_level`, `product_lookup`, `add_to_products` (boolean; header alias **`add_to_section`** accepted). **`product_lookup`** uses the same name/variant keying as Sales bulk import. **`add_to_products` true** with no lookup match inserts a stub **Product** (`category = 'GENERAL'`, **`mrp`** / **`cost_price`** from row **`unit_cost`**).
+- **UI**: Low-stock row styling when **`reorder_level`** is set and **`current_stock <= reorder_level`**.
+
+### Level 3
+
+- **Migration `20260328120000_inventory_items.sql`**: **`inventory_items`** table, tenant RLS, partial unique **`(business_id, product_id)`** where **`product_id` IS NOT NULL**, **`inventory_items_push_to_ledger`** + **`inventory_pull_to_items`** trigger wiring.
+- **Migration `20260329120000_inventory_sync_triggers_security_definer.sql`**: Both sync functions must be **`SECURITY DEFINER`** so updates that originate inside **`inventory_apply_delta`** / **`save_sale`** are not blocked by RLS on **`inventory`** / **`inventory_items`**.
+
+### RLS vs SECURITY DEFINER (why sync triggers are definer)
+
+#### Level 1
+
+- **RLS** filters rows per tenant using **`auth.uid()`** / **`current_business_id()`** — the default for app traffic through PostgREST.
+- **`save_sale`** and **`inventory_apply_delta`** are **`SECURITY DEFINER`** so stock math runs reliably with ledger access inside an RPC.
+- **Sync triggers** copy between **`inventory`** and **`inventory_items`**; if they stay **`INVOKER`**, RLS can **block** those writes **silently** (0 rows updated). **`SECURITY DEFINER`** on **`inventory_pull_to_items`** / **`inventory_items_push_to_ledger`** fixes that while **`WHERE`** clauses stay tied to **`NEW.business_id`** / **`NEW.product_id`**.
+
+#### Level 2
+
+- **Silent failure mode**: trigger **`UPDATE`** passes RLS → no match → no error → UI looks “stuck.” Always verify **ledger** changed first, then **line** + **`product_id`** link.
+- **Regression mode**: replacing **`save_sale`** without **`perform inventory_apply_delta`** breaks the whole chain even if triggers exist.
+- **Design tradeoff**: definer triggers are **trusted code** — keep them minimal; **`SET search_path = public`** reduces hijack risk.
+
+#### Level 3
+
+- **Transactions**: failed **`inventory_apply_delta`** (e.g. negative stock) aborts **`save_sale`** entirely.
+- **Loop control**: **`IS DISTINCT FROM`** on pull avoids redundant **`inventory_items`** updates when the value is already aligned.
+- **Alternatives**: app-only sync (weaker if SQL/RPC bypasses app), single-table + views (simpler reads, bigger schema change).
+
+### Next.js dev — “looks like plain HTML”
+
+#### Level 1
+
+- Styled UI depends on **`/_next/static/css/...`** loading. If that request **fails** (often **500**), Tailwind/global CSS never applies → **unstyled** page (default fonts, blue links).
+
+#### Level 2
+
+- **Corrupt `.next`** (e.g. **`Cannot find module './72.js'`**) can break **CSS** and other routes. **`rm -rf .next`** + **one** **`npm run dev`** instance fixes most cases.
+- **Two dev servers** (e.g. **3000** broken, **3001** fine) → user hits the wrong port and sees errors or stale assets.
+
+#### Level 3
+
+- Confirm in **DevTools → Network** that **`layout.css`** (or linked CSS) is **200**, not **500**/**404**. Use **`npm run dev:clean`** (script in **`package.json`**) when diagnosing.
+
+### React — async `useEffect` and import errors
+
+#### Level 1
+
+- **`useEffect`** that **`await`s** auth/profile should use a **mounted flag** (or abort) so **`setState`** does not run after unmount (avoids warnings/races).
+
+#### Level 2
+
+- **`devError`** (**`lib/devLog.ts`**) logs **`catch`** details **only in development** so PMs/devs see stack traces without shipping **`console`** noise to production users who already get toasts.

@@ -18,6 +18,13 @@ import {
   parseCsv,
   type ImportIssue,
 } from '@/lib/importCsv';
+import {
+  buildProductLookupMap,
+  PRODUCT_LOOKUP_AMBIGUOUS_MESSAGE,
+  resolveProductLookup,
+  type ProductLookupResolution,
+} from '@/lib/productLookupMap';
+import { devError } from '@/lib/devLog';
 import { PageHeader } from '@/components/PageHeader';
 import { Button } from '@/components/ui/button';
 import { Fab } from '@/components/Fab';
@@ -133,6 +140,7 @@ export default function SalesPage() {
 
   async function importSalesFile(file: File) {
     setImporting(true);
+    try {
     const supabase = getSupabaseClient();
     const text = await file.text();
     const { rows: csvRows } = parseCsv(text);
@@ -143,18 +151,13 @@ export default function SalesPage() {
       .select('id, name, variant')
       .is('deleted_at', null);
     if (pErr) {
-      setImporting(false);
       toast.error(pErr.message);
       return;
     }
 
-    const productMap = new Map<string, string>();
-    for (const p of (productRows ?? []) as { id: string; name: string; variant: string | null }[]) {
-      productMap.set(p.name.trim().toLowerCase(), p.id);
-      if (p.variant && p.variant.trim() !== '') {
-        productMap.set(`${p.name.trim().toLowerCase()}::${p.variant.trim().toLowerCase()}`, p.id);
-      }
-    }
+    const lookupIndex = buildProductLookupMap(
+      (productRows ?? []) as { id: string; name: string; variant: string | null }[],
+    );
 
     type Group = {
       rowNos: number[];
@@ -176,10 +179,13 @@ export default function SalesPage() {
       const date = normalizeDateYmd(dateRaw);
       const paymentMode = getString(r, 'payment_mode').toLowerCase();
       const saleTypeRaw = getString(r, 'sale_type').toUpperCase();
-      const lookup = getString(r, 'product_lookup').toLowerCase();
+      const lookupStr = getString(r, 'product_lookup');
+      const resolved: ProductLookupResolution = lookupStr
+        ? resolveProductLookup(lookupIndex, lookupStr)
+        : { productId: null, ambiguous: false };
+      const productId = resolved.productId;
       const qty = getRequiredNumber(r, 'quantity');
       const salePrice = getRequiredNumber(r, 'sale_price');
-      const productId = productMap.get(lookup);
 
       if (!ref) issues.push({ row: rowNo, field: 'sale_ref', message: 'required' });
       if (!date) issues.push({ row: rowNo, field: 'date', message: 'invalid date (use YYYY-MM-DD or DD/MM/YYYY)' });
@@ -191,7 +197,11 @@ export default function SalesPage() {
       }
       if (qty === null || qty <= 0) issues.push({ row: rowNo, field: 'quantity', message: 'must be > 0' });
       if (salePrice === null || salePrice < 0) issues.push({ row: rowNo, field: 'sale_price', message: 'must be >= 0' });
-      if (!productId) issues.push({ row: rowNo, field: 'product_lookup', message: 'no matching product' });
+      if (resolved.ambiguous) {
+        issues.push({ row: rowNo, field: 'product_lookup', message: PRODUCT_LOOKUP_AMBIGUOUS_MESSAGE });
+      } else if (!productId) {
+        issues.push({ row: rowNo, field: 'product_lookup', message: 'no matching product' });
+      }
 
       if (!ref || !date || (paymentMode !== 'cash' && paymentMode !== 'online') || qty === null || qty <= 0 || salePrice === null || salePrice < 0 || !productId) {
         return;
@@ -241,10 +251,15 @@ export default function SalesPage() {
       }
     }
 
-    setImporting(false);
     if (issues.length > 0) downloadCsv('sales_import_errors.csv', buildImportIssuesCsv(issues));
     toast.success(`Sales import complete: ${inserted} inserted, ${issues.length} failed rows.`);
     await load();
+    } catch (e) {
+      devError('sales import', e);
+      toast.error(e instanceof Error ? e.message : 'Sales import failed');
+    } finally {
+      setImporting(false);
+    }
   }
 
   if (!ready) {
