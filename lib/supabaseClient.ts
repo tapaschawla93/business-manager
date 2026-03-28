@@ -2,6 +2,13 @@ import { createClient, SupabaseClient } from '@supabase/supabase-js';
 
 let browserClient: SupabaseClient | null = null;
 
+/** True when public env vars are present (safe to call before `getSupabaseClient`). */
+export function isSupabaseConfigured(): boolean {
+  const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
+  const key = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+  return Boolean(url && String(url).trim() && key && String(key).trim());
+}
+
 /**
  * Browser Supabase client (anon key). Use only after NEXT_PUBLIC_* env vars are set.
  */

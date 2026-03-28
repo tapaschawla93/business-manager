@@ -4,22 +4,21 @@ All notable changes to this project are documented here. Format loosely follows 
 
 ## [Unreleased]
 
-### Fixed
-
-- **Sales → stock:** `save_sale` again decrements `public.inventory` via `inventory_apply_delta` (regression removed in v1 wrap-up migration). Run `supabase/migrations/20260329103000_save_sale_restore_inventory_delta.sql` on Supabase so sales reduce ledger qty and linked **Inventory** lines sync.
-- **Inventory sync triggers:** `inventory_pull_to_items` / `inventory_items_push_to_ledger` are `SECURITY DEFINER` so RLS does not block ledger ↔ `inventory_items` updates when `save_sale` runs. Apply `supabase/migrations/20260329120000_inventory_sync_triggers_security_definer.sql` after the `save_sale` fix.
-- **Inventory UI:** Refetch lines when the browser tab becomes visible again (e.g. after Sales in another tab).
-
 ### Added
 
-- **Manual inventory (`inventory_items`):** `/inventory` page (list, edit dialog, product link, low-stock row tint, CSV template + bulk import, unlinked-save confirm). **`public.inventory`** remains the sale/expense stock ledger; when an item has **`product_id`**, DB triggers sync quantities between **`inventory_items`** and **`inventory`**. Settings hub: **`template_inventory.csv`** + upload. Nav: **Inventory** last (**Warehouse** icon) in **`lib/nav.ts`** and aligned **`Sidebar.tsx`**. Migration `20260328120000_inventory_items.sql`; greenfield **`supabase/schema.sql`** §4c.
+- **Manual inventory (`inventory_items`):** `/inventory` page (list, edit dialog, product link, low-stock row tint, CSV template + bulk import, unlinked-save **AlertDialog**). Ledger **`public.inventory`** (`quantity_on_hand`); linked lines sync via DB triggers. Settings: inventory CSV template + upload. Nav **Inventory** last (`lib/nav.ts`, `Sidebar.tsx`). Migrations `20260328120000_inventory_items.sql`, `20260329103000_save_sale_restore_inventory_delta.sql`, `20260329120000_inventory_sync_triggers_security_definer.sql`; greenfield **`supabase/schema.sql`** §4c + **`inventory_apply_delta`** + **`save_sale`** stock step.
+- **`npm run dev:clean`:** `rm -rf .next && next dev` (fixes corrupt dev cache / missing chunk / “unstyled” UI when CSS 500s).
+- **`lib/productLookupMap.ts`:** name / `name::variant` index; **ambiguous** duplicate catalog keys → failed CSV row (inventory + sales Settings bulk + sales page import).
+- **`lib/inventory/importInventoryCsv.ts`**, **`stubProduct.ts`**, **`lib/types/inventoryItem.ts`**; **`importCsv`:** `getAddToProductsFlag` (accepts `add_to_section` header alias).
+- **`lib/devLog.ts`:** `devError` — logs import failures in **development** only (alongside toasts).
+- **`lib/queries/inventoryItems.ts`:** explicit `inventory_items` column list + row mapper (not `select('*')`).
 - **UI Overhaul (V1):** shadcn-style components under `components/ui/` (Button, Card, Input, Table, Dialog, Sheet, Popover, Command, AlertDialog, Sonner, etc.), **`#16a34a`** primary tokens in `globals.css`, **`AppChrome` / `AppShell`** with **240px sidebar** (desktop) and **64px bottom nav** (mobile), **`Fab`** on Products + Expenses. **BizManager** branding in sidebar. **Sonner** toasts; archive confirmations via **Dialog/AlertDialog** (replaces `window.confirm`). Login remains **minimal centered card** (no shell). Sales **product search** uses **Popover + cmdk** (same client product list as before).
 - Added `components/layout/Sidebar.tsx` (standalone desktop sidebar component): fixed 240px rail, nav icons, active-state styling, user badge, and logout action. Not wired by default.
 - **Bulk upload hub (Settings):** Added CSV template download + CSV upload for **Products**, **Expenses**, and **Sales** (`sale_ref` grouped line-item format). Imports support partial success and downloadable error CSV reports.
 - Added shared CSV import helpers in `lib/importCsv.ts` (parse, typed getters, error report CSV builder).
 - Added module-level bulk controls on **Products**, **Sales**, and **Expenses** screens (Template + Bulk Upload) in addition to Settings.
-- **Docs:** `docs/PRD.md` — `prd.v2.mobile-polish` (spec: mobile Sales list as accordion rows; **not implemented** — `app/sales/page.tsx` still uses one wide `Table`).
-- **Docs:** `docs/knowledgebase.md` — vendors migration baseline (`CREATE IF NOT EXISTS` vs ALTER-only pitfall), shell nav single source (`lib/nav.ts`), local Next dev HTTP 500 / port cleanup.
+- **Docs:** `docs/PRD.md` — `prd.v2.4.3` manual inventory delivery notes; `prd.v2.mobile-polish` (accordion Sales list **not implemented** — wide `Table` remains).
+- **Docs:** `docs/knowledgebase.md` — manual inventory ledger vs `inventory_items`, RLS vs **`SECURITY DEFINER`** sync triggers, Next “plain HTML” / `.next` / port, React async session effect hygiene, vendors migration baseline, `lib/nav` single source.
 
 - Multi-tenant shell: `businesses` + `profiles`, `create_business_for_user` onboarding RPC, `current_business_id()` for RLS.
 - **Products** (`/products`): CRUD, optional `variant`, ₹ display via `formatInrDisplay`, soft archive (`deleted_at`); archive via **`archive_product` RPC** (client calls RPC, not raw update).
@@ -43,9 +42,13 @@ All notable changes to this project are documented here. Format loosely follows 
 - Removed redundant per-page export CTA/buttons from **Sales** and **Expenses** pages; Settings remains the centralized export surface.
 - **Vendors (V2 slice):** `vendors.contact_person` and `vendors.address` (nullable). Vendors page: extended create form, directory table columns, CSV template + bulk upload (partial success + error CSV). Vendor detail shows contact/address. **Expenses:** optional `VendorPicker` sets `vendor_id` + `vendor_name`; editing the name or clearing the picker drops `vendor_id` (free-text does not auto-create a vendor). **`lib/nav.ts`:** `/vendors` on **Dashboard → Products → Sales → Expenses → Vendors** for **AppShell** + **MobileBottomNav** (standalone `components/layout/Sidebar.tsx` also lists Vendors if reused).
 - **DB migration:** `20260327200000_vendors_contact_address.sql` — baseline `CREATE TABLE IF NOT EXISTS public.vendors` + `ADD COLUMN` for PRD fields + `expenses.vendor_id` / `product_id` + `expenses_validate_refs` when `vendors` or FK columns were missing (safe if `20260326120000_inventory_vendors.sql` never ran).
+- **Sales / Settings bulk CSV:** sales import uses `try`/`finally` + shared lookup map (same semantics as inventory CSV).
 
 ### Fixed
 
+- **Sales → stock:** `save_sale` calls **`inventory_apply_delta`** again (v1 wrap-up had dropped it). Deploy **`20260329103000_save_sale_restore_inventory_delta.sql`** on Supabase.
+- **Ledger ↔ lines sync:** **`inventory_pull_to_items`** / **`inventory_items_push_to_ledger`** are **`SECURITY DEFINER`** so RLS does not block sync after `save_sale`. Deploy **`20260329120000_inventory_sync_triggers_security_definer.sql`** after the `save_sale` migration.
+- **Inventory page:** tab **visibility** refetch; CSV import **`try`/`catch`/`finally`**; profile bootstrap **`useEffect`** uses **mounted** guard (no post-unmount `setState`).
 - **Vercel build (PostCSS)**: Pinned `postcss-load-config` to `^4.0.1` via `package.json` `overrides`. `tailwindcss` 3.4.19 pulled in `postcss-load-config` v6 as a transitive dependency, which is incompatible with Next.js 14.1.0's PostCSS plugin validator. This caused a `Malformed PostCSS Configuration` crash exclusively during `next build` (Vercel production) while `next dev` continued to work locally. The override forces v4 for all consumers and restores build compatibility.
 
 - **`save_sale`**: `jsonb_array_elements` loop uses explicit `elem` column (avoids `record has no field` runtime error).
@@ -60,3 +63,4 @@ All notable changes to this project are documented here. Format loosely follows 
 ### Security
 
 - RLS on tenant tables; no client INSERT on `sale_items`; `save_sale` / `archive_*` / **`get_dashboard_kpis`** / **`get_top_products`** RPCs are `SECURITY DEFINER` with `auth.uid()` + `current_business_id()` / `business_id` scoping inside the function.
+- Inventory ledger sync trigger functions **`SECURITY DEFINER`** with **`SET search_path = public`**; updates scoped by **`NEW.business_id`** / **`NEW.product_id`** only.

@@ -1,7 +1,6 @@
 'use client';
 
 import { useCallback, useEffect, useState } from 'react';
-import { useRouter } from 'next/navigation';
 import { toast } from 'sonner';
 import { fetchActiveExpenses } from '@/lib/queries/expenses';
 import { getSupabaseClient } from '@/lib/supabaseClient';
@@ -39,12 +38,13 @@ import {
   type ImportIssue,
 } from '@/lib/importCsv';
 import { PageHeader } from '@/components/PageHeader';
+import { PageLoadingSkeleton } from '@/components/layout/PageLoadingSkeleton';
+import { SessionRedirectNotice } from '@/components/SessionRedirectNotice';
+import { useBusinessSession } from '@/lib/auth/useBusinessSession';
 
 export default function ExpensesPage() {
-  const router = useRouter();
-  const [sessionOk, setSessionOk] = useState(false);
-  const [checkingSession, setCheckingSession] = useState(true);
-  const [businessId, setBusinessId] = useState<string | null>(null);
+  const session = useBusinessSession({ onMissingBusiness: 'error' });
+  const businessId = session.kind === 'ready' ? session.businessId : null;
 
   const [expenses, setExpenses] = useState<Expense[]>([]);
   const [loading, setLoading] = useState(true);
@@ -69,35 +69,6 @@ export default function ExpensesPage() {
     }
     setExpenses(data ?? []);
   }, [businessId]);
-
-  useEffect(() => {
-    const supabase = getSupabaseClient();
-
-    async function init() {
-      const { data: sessionData } = await supabase.auth.getSession();
-      if (!sessionData.session) {
-        router.replace('/login');
-        return;
-      }
-      setSessionOk(true);
-
-      const { data: profile, error: profileError } = await supabase
-        .from('profiles')
-        .select('business_id')
-        .single();
-
-      if (profileError || !profile?.business_id) {
-        setError(profileError?.message ?? 'No business profile');
-        setCheckingSession(false);
-        return;
-      }
-
-      setBusinessId(profile.business_id);
-      setCheckingSession(false);
-    }
-
-    void init();
-  }, [router]);
 
   useEffect(() => {
     if (!businessId) return;
@@ -223,16 +194,28 @@ export default function ExpensesPage() {
     toast.success(`Expenses import complete: ${inserted} inserted, ${issues.length} failed.`);
   }
 
-  if (checkingSession || !sessionOk) {
-    return <p className="text-sm text-muted-foreground">Loading…</p>;
+  if (session.kind === 'loading') {
+    return <PageLoadingSkeleton />;
+  }
+
+  if (session.kind === 'redirect_login') {
+    return <SessionRedirectNotice to="login" />;
+  }
+
+  if (session.kind === 'error') {
+    return <p className="text-sm text-destructive">{session.message}</p>;
+  }
+
+  if (session.kind === 'redirect_home') {
+    return <SessionRedirectNotice to="home" />;
   }
 
   if (!businessId) {
-    return error ? <p className="text-sm text-destructive">{error}</p> : <p className="text-sm text-muted-foreground">Loading…</p>;
+    return <PageLoadingSkeleton />;
   }
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-8">
       <PageHeader
         title="Expenses"
         description="Manage purchases and operating costs. Total is quantity × unit cost."

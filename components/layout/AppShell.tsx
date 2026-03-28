@@ -38,9 +38,18 @@ export function AppShell({ children }: { children: ReactNode }) {
 
   async function handleSignOut() {
     const supabase = getSupabaseClient();
-    await supabase.auth.signOut();
-    router.replace('/login');
-    router.refresh();
+    try {
+      await supabase.auth.signOut({ scope: 'local' });
+    } catch {
+      /* still navigate */
+    }
+    // Hard navigation so logout works even if client routing or React state is stuck.
+    if (typeof window !== 'undefined') {
+      window.location.assign('/login');
+    } else {
+      router.replace('/login');
+      router.refresh();
+    }
   }
 
   return (
@@ -103,7 +112,17 @@ export function AppShell({ children }: { children: ReactNode }) {
 
       <main className="min-h-screen md:pl-[var(--sidebar-width)]">
         <div className="mx-auto max-w-7xl px-[var(--main-padding-x)] pb-[var(--main-bottom-mobile)] py-6 md:px-[var(--main-padding-x-md)] md:pb-[var(--main-bottom-desktop)] md:py-8">
-          {children}
+          {/*
+            Home (/) stays full-bleed like the dashboard overview. Other routes get a soft
+            canvas so tables and forms read as part of the app shell, not raw HTML on gray.
+          */}
+          {pathname === '/' ? (
+            children
+          ) : (
+            <div className="rounded-card border border-border/60 bg-card/85 p-4 shadow-sm sm:p-6 md:p-8">
+              {children}
+            </div>
+          )}
         </div>
       </main>
 

@@ -2,7 +2,6 @@
 
 import { FormEvent, useCallback, useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
-import { useRouter } from 'next/navigation';
 import { toast } from 'sonner';
 import { Download, Plus, RefreshCw, Truck, Upload } from 'lucide-react';
 import { downloadCsv, rowsToCsv } from '@/lib/exportCsv';
@@ -17,6 +16,9 @@ import { getSupabaseClient } from '@/lib/supabaseClient';
 import { fetchActiveVendors } from '@/lib/queries/vendors';
 import type { Vendor } from '@/lib/types/vendor';
 import { PageHeader } from '@/components/PageHeader';
+import { PageLoadingSkeleton } from '@/components/layout/PageLoadingSkeleton';
+import { SessionRedirectNotice } from '@/components/SessionRedirectNotice';
+import { useBusinessSession } from '@/lib/auth/useBusinessSession';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -31,10 +33,9 @@ import {
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 
 export default function VendorsPage() {
-  const router = useRouter();
+  const session = useBusinessSession({ onMissingBusiness: 'redirect-home' });
+  const businessId = session.kind === 'ready' ? session.businessId : null;
   const uploadRef = useRef<HTMLInputElement | null>(null);
-  const [ready, setReady] = useState(false);
-  const [businessId, setBusinessId] = useState<string | null>(null);
   const [vendors, setVendors] = useState<Vendor[]>([]);
   const [loading, setLoading] = useState(true);
   const [importing, setImporting] = useState(false);
@@ -61,24 +62,6 @@ export default function VendorsPage() {
     setVendors(data ?? []);
     setError(null);
   }, [businessId]);
-
-  useEffect(() => {
-    const supabase = getSupabaseClient();
-    void (async () => {
-      const { data: sessionData } = await supabase.auth.getSession();
-      if (!sessionData.session) {
-        router.replace('/login');
-        return;
-      }
-      const { data: profile, error: pe } = await supabase.from('profiles').select('business_id').single();
-      if (pe || !profile?.business_id) {
-        router.replace('/');
-        return;
-      }
-      setBusinessId(profile.business_id);
-      setReady(true);
-    })();
-  }, [router]);
 
   useEffect(() => {
     if (!businessId) return;
@@ -180,12 +163,24 @@ export default function VendorsPage() {
     await load();
   }
 
-  if (!ready) {
-    return <p className="text-sm text-muted-foreground">Loading…</p>;
+  if (session.kind === 'loading') {
+    return <PageLoadingSkeleton />;
+  }
+
+  if (session.kind === 'redirect_login') {
+    return <SessionRedirectNotice to="login" />;
+  }
+
+  if (session.kind === 'redirect_home') {
+    return <SessionRedirectNotice to="home" />;
+  }
+
+  if (session.kind === 'error') {
+    return <p className="text-sm text-destructive">{session.message}</p>;
   }
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-8">
       <PageHeader
         title="Vendors"
         description="Suppliers and partners. Pick a directory vendor on expenses for history in one place, or type a name without linking."

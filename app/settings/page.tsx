@@ -6,9 +6,12 @@ import { toast } from 'sonner';
 import { Download, Upload } from 'lucide-react';
 import { downloadCsv, rowsToCsv } from '@/lib/exportCsv';
 import { getSupabaseClient } from '@/lib/supabaseClient';
+import { withTimeout } from '@/lib/withTimeout';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { PageHeader } from '@/components/PageHeader';
+import { PageLoadingSkeleton } from '@/components/layout/PageLoadingSkeleton';
+import { SessionRedirectNotice } from '@/components/SessionRedirectNotice';
 import {
   buildImportIssuesCsv,
   getNullableString,
@@ -35,16 +38,30 @@ import {
  */
 export default function SettingsPage() {
   const router = useRouter();
-  const [ready, setReady] = useState(false);
+  const [authGate, setAuthGate] = useState<'loading' | 'guest' | 'signed_in'>('loading');
   const [busy, setBusy] = useState<string | null>(null);
   const [importResult, setImportResult] = useState<string | null>(null);
 
   useEffect(() => {
     const supabase = getSupabaseClient();
-    void supabase.auth.getSession().then(({ data }) => {
-      if (!data.session) router.replace('/login');
-      else setReady(true);
-    });
+    void (async () => {
+      try {
+        const { data, error } = await withTimeout(
+          supabase.auth.getUser(),
+          25_000,
+          'Sign-in check timed out. Check your network, then refresh.',
+        );
+        if (error || !data.user) {
+          router.replace('/login');
+          setAuthGate('guest');
+          return;
+        }
+        setAuthGate('signed_in');
+      } catch {
+        setAuthGate('guest');
+        router.replace('/login');
+      }
+    })();
   }, [router]);
 
   const exportProducts = useCallback(async () => {
@@ -573,12 +590,16 @@ export default function SettingsPage() {
     toast.success(`Inventory import complete: ${result.inserted} inserted.`);
   }
 
-  if (!ready) {
-    return <p className="text-sm text-muted-foreground">Loading…</p>;
+  if (authGate === 'loading') {
+    return <PageLoadingSkeleton />;
+  }
+
+  if (authGate === 'guest') {
+    return <SessionRedirectNotice to="login" />;
   }
 
   return (
-    <div className="mx-auto max-w-lg space-y-6">
+    <div className="mx-auto max-w-4xl space-y-8">
       <PageHeader
         title="Settings"
         description="Export data, download templates, and bulk upload by module."
@@ -640,7 +661,7 @@ export default function SettingsPage() {
             Download the template, fill rows, then upload CSV. Valid rows are inserted; invalid rows are exported as error CSV.
           </CardDescription>
         </CardHeader>
-        <CardContent className="space-y-6">
+        <CardContent className="space-y-8">
           <div className="space-y-2">
             <p className="text-sm font-semibold">Products</p>
             <div className="flex flex-col gap-2 sm:flex-row">

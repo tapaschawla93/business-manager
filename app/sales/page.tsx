@@ -1,7 +1,6 @@
 'use client';
 
 import { useCallback, useEffect, useState } from 'react';
-import { useRouter } from 'next/navigation';
 import { Download, Plus, Upload } from 'lucide-react';
 import { toast } from 'sonner';
 import { getSupabaseClient } from '@/lib/supabaseClient';
@@ -40,6 +39,8 @@ import { Card, CardContent } from '@/components/ui/card';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Badge } from '@/components/ui/badge';
 import { Skeleton } from '@/components/ui/skeleton';
+import { SessionRedirectNotice } from '@/components/SessionRedirectNotice';
+import { useBusinessSession } from '@/lib/auth/useBusinessSession';
 
 function formatDateShort(iso: string): string {
   try {
@@ -58,8 +59,8 @@ function orderLabel(id: string): string {
 }
 
 export default function SalesPage() {
-  const router = useRouter();
-  const [ready, setReady] = useState(false);
+  const session = useBusinessSession({ onMissingBusiness: 'redirect-home' });
+  const ready = session.kind === 'ready';
   const [rows, setRows] = useState<SaleListRow[] | null>(null);
   const [loading, setLoading] = useState(true);
   const [dialogOpen, setDialogOpen] = useState(false);
@@ -77,29 +78,6 @@ export default function SalesPage() {
     }
     setRows(data ?? []);
   }, []);
-
-  useEffect(() => {
-    const supabase = getSupabaseClient();
-
-    async function init() {
-      const { data: sessionData } = await supabase.auth.getSession();
-      if (!sessionData.session) {
-        router.replace('/login');
-        return;
-      }
-
-      const { data: profile, error } = await supabase.from('profiles').select('business_id').single();
-
-      if (error || !profile?.business_id) {
-        router.replace('/');
-        return;
-      }
-
-      setReady(true);
-    }
-
-    void init();
-  }, [router]);
 
   useEffect(() => {
     if (!ready) return;
@@ -262,17 +240,29 @@ export default function SalesPage() {
     }
   }
 
-  if (!ready) {
+  if (session.kind === 'loading') {
     return (
-      <div className="space-y-6">
+      <div className="space-y-8">
         <Skeleton className="h-10 w-64 rounded-lg" />
         <Skeleton className="h-48 w-full rounded-card" />
       </div>
     );
   }
 
+  if (session.kind === 'redirect_login') {
+    return <SessionRedirectNotice to="login" />;
+  }
+
+  if (session.kind === 'redirect_home') {
+    return <SessionRedirectNotice to="home" />;
+  }
+
+  if (session.kind === 'error') {
+    return <p className="text-sm text-destructive">{session.message}</p>;
+  }
+
   return (
-    <div className="space-y-6">
+    <div className="space-y-8">
       <PageHeader
         title="Sales Records"
         description="Track all your customer orders and revenue."

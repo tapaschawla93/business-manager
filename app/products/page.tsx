@@ -1,7 +1,6 @@
 'use client';
 
 import { FormEvent, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
-import { useRouter } from 'next/navigation';
 import { toast } from 'sonner';
 import { Download, Pencil, Plus, RefreshCw, Search, Trash2, Upload, Package2 } from 'lucide-react';
 import { formatInrDisplay } from '@/lib/formatInr';
@@ -25,6 +24,8 @@ import {
 import { PageHeader } from '@/components/PageHeader';
 import { Fab } from '@/components/Fab';
 import { Skeleton } from '@/components/ui/skeleton';
+import { SessionRedirectNotice } from '@/components/SessionRedirectNotice';
+import { useBusinessSession } from '@/lib/auth/useBusinessSession';
 type MarginTone = 'good' | 'warn' | 'bad' | 'na';
 
 /** UI margin from MRP & cost (catalog); not stored. */
@@ -43,11 +44,9 @@ function getMargin(p: Product): { label: string; tone: MarginTone } {
  * business_id from profiles; RLS enforces isolation.
  */
 export default function ProductsPage() {
-  const router = useRouter();
-  const [sessionOk, setSessionOk] = useState(false);
-  const [checkingSession, setCheckingSession] = useState(true);
-  const [businessId, setBusinessId] = useState<string | null>(null);
-  const [userEmail, setUserEmail] = useState<string | null>(null);
+  const session = useBusinessSession({ onMissingBusiness: 'error' });
+  const businessId = session.kind === 'ready' ? session.businessId : null;
+  const userEmail = session.kind === 'ready' ? session.email : null;
 
   const [products, setProducts] = useState<Product[]>([]);
   const [loading, setLoading] = useState(true);
@@ -85,36 +84,6 @@ export default function ProductsPage() {
     }
     setProducts((data as Product[]) ?? []);
   }, []);
-
-  useEffect(() => {
-    const supabase = getSupabaseClient();
-
-    async function init() {
-      const { data: sessionData } = await supabase.auth.getSession();
-      if (!sessionData.session) {
-        router.replace('/login');
-        return;
-      }
-      setUserEmail(sessionData.session.user.email ?? null);
-      setSessionOk(true);
-
-      const { data: profile, error: profileError } = await supabase
-        .from('profiles')
-        .select('business_id')
-        .single();
-
-      if (profileError || !profile?.business_id) {
-        setError(profileError?.message ?? 'No business profile');
-        setCheckingSession(false);
-        return;
-      }
-
-      setBusinessId(profile.business_id);
-      setCheckingSession(false);
-    }
-
-    init();
-  }, [router]);
 
   useEffect(() => {
     if (!businessId) return;
@@ -347,9 +316,9 @@ export default function ProductsPage() {
     toast.success(`Products import complete: ${inserted} inserted, ${issues.length} failed.`);
   }
 
-  if (checkingSession || !sessionOk) {
+  if (session.kind === 'loading') {
     return (
-      <div className="space-y-6">
+      <div className="space-y-8">
         <Skeleton className="h-10 w-72 rounded-lg" />
         <Skeleton className="h-12 w-full max-w-md rounded-xl" />
         <Skeleton className="h-64 w-full rounded-card" />
@@ -357,8 +326,20 @@ export default function ProductsPage() {
     );
   }
 
+  if (session.kind === 'redirect_login') {
+    return <SessionRedirectNotice to="login" />;
+  }
+
+  if (session.kind === 'error') {
+    return <p className="text-sm text-destructive">{session.message}</p>;
+  }
+
+  if (session.kind === 'redirect_home') {
+    return <SessionRedirectNotice to="home" />;
+  }
+
   return (
-    <div className="space-y-6">
+    <div className="space-y-8">
       <PageHeader
         title="Product Repository"
         description="Master list of all products and their category mappings."

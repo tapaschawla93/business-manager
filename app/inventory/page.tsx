@@ -1,7 +1,6 @@
 'use client';
 
 import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { useRouter } from 'next/navigation';
 import { toast } from 'sonner';
 import { Download, Pencil, Plus, RefreshCw, Search, Upload, Warehouse } from 'lucide-react';
 import { downloadCsv, rowsToCsv } from '@/lib/exportCsv';
@@ -39,6 +38,8 @@ import {
 } from '@/components/ui/alert-dialog';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Skeleton } from '@/components/ui/skeleton';
+import { SessionRedirectNotice } from '@/components/SessionRedirectNotice';
+import { useBusinessSession } from '@/lib/auth/useBusinessSession';
 
 /** Optional reorder hint: highlight when at or on threshold (inclusive). */
 function isLowStock(row: InventoryItem): boolean {
@@ -47,11 +48,9 @@ function isLowStock(row: InventoryItem): boolean {
 }
 
 export default function InventoryPage() {
-  const router = useRouter();
+  const session = useBusinessSession({ onMissingBusiness: 'error' });
+  const businessId = session.kind === 'ready' ? session.businessId : null;
   const uploadRef = useRef<HTMLInputElement | null>(null);
-  const [sessionOk, setSessionOk] = useState(false);
-  const [checking, setChecking] = useState(true);
-  const [businessId, setBusinessId] = useState<string | null>(null);
   const [rows, setRows] = useState<InventoryItem[]>([]);
   const [products, setProducts] = useState<Product[]>([]);
   const [loading, setLoading] = useState(true);
@@ -95,32 +94,6 @@ export default function InventoryPage() {
     setProducts((prodRes.data as Product[]) ?? []);
     setError(null);
   }, [businessId]);
-
-  useEffect(() => {
-    let mounted = true;
-    const supabase = getSupabaseClient();
-    void (async () => {
-      const { data: sessionData } = await supabase.auth.getSession();
-      if (!mounted) return;
-      if (!sessionData.session) {
-        router.replace('/login');
-        return;
-      }
-      setSessionOk(true);
-      const { data: profile, error: pe } = await supabase.from('profiles').select('business_id').single();
-      if (!mounted) return;
-      if (pe || !profile?.business_id) {
-        setError(pe?.message ?? 'No business profile');
-        setChecking(false);
-        return;
-      }
-      setBusinessId(profile.business_id);
-      setChecking(false);
-    })();
-    return () => {
-      mounted = false;
-    };
-  }, [router]);
 
   useEffect(() => {
     if (!businessId) return;
@@ -342,9 +315,9 @@ export default function InventoryPage() {
     await persistItem(stub.id);
   }
 
-  if (checking || !sessionOk) {
+  if (session.kind === 'loading') {
     return (
-      <div className="space-y-6">
+      <div className="space-y-8">
         <Skeleton className="h-10 w-72 rounded-lg" />
         <Skeleton className="h-12 w-full max-w-md rounded-xl" />
         <Skeleton className="h-64 w-full rounded-card" />
@@ -352,12 +325,24 @@ export default function InventoryPage() {
     );
   }
 
+  if (session.kind === 'redirect_login') {
+    return <SessionRedirectNotice to="login" />;
+  }
+
+  if (session.kind === 'error') {
+    return <p className="text-sm text-destructive">{session.message}</p>;
+  }
+
+  if (session.kind === 'redirect_home') {
+    return <SessionRedirectNotice to="home" />;
+  }
+
   if (!businessId) {
-    return error ? <p className="text-sm text-destructive">{error}</p> : null;
+    return null;
   }
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-8">
       <PageHeader
         title="Inventory"
         description="Manual stock lines; link a catalog product so sales and stock-in expenses update quantity. Saving a linked line sets the stock ledger for that product to this quantity."
