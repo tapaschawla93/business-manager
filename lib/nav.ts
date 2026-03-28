@@ -8,7 +8,7 @@ import {
   type LucideIcon,
 } from 'lucide-react';
 
-/** Primary shell nav (desktop sidebar + mobile bottom bar). */
+/** Primary shell nav (desktop sidebar + mobile slide-over menu — same items). */
 export const MAIN_NAV_ITEMS: ReadonlyArray<{ href: string; label: string; Icon: LucideIcon }> = [
   { href: '/', label: 'Dashboard', Icon: LayoutDashboard },
   { href: '/products', label: 'Products', Icon: Package2 },

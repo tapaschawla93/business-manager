@@ -16,7 +16,7 @@ export function Fab({ className, 'aria-label': ariaLabel, ...props }: FabProps) 
       type="button"
       size="icon"
       className={cn(
-        'fixed bottom-[calc(var(--mobile-nav-height)+var(--fab-gap))] right-4 z-40 h-14 w-14 rounded-full border border-primary/20 shadow-lg shadow-primary/20 md:bottom-6 md:right-6',
+        'fixed bottom-[var(--page-fab-bottom-mobile)] right-4 z-40 h-14 w-14 rounded-full border border-primary/20 shadow-lg shadow-primary/20 md:bottom-6 md:right-6',
         className,
       )}
       aria-label={ariaLabel ?? 'Quick menu'}

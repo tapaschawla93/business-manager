@@ -40,6 +40,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { Skeleton } from '@/components/ui/skeleton';
 import { SessionRedirectNotice } from '@/components/SessionRedirectNotice';
 import { useBusinessSession } from '@/lib/auth/useBusinessSession';
+import { InventoryMobileList } from '@/app/inventory/components/InventoryMobileList';
 
 /** Optional reorder hint: highlight when at or on threshold (inclusive). */
 function isLowStock(row: InventoryItem): boolean {
@@ -391,13 +392,17 @@ export default function InventoryPage() {
         <Card className="border-primary/15 bg-gradient-to-br from-card to-accent/40 shadow-sm">
           <CardContent className="p-4">
             <p className="text-xs font-medium text-muted-foreground">Inventory value (qty × unit cost)</p>
-            <p className="mt-1 text-2xl font-bold tracking-tight text-foreground">{formatInrDisplay(totalValue)}</p>
+            <p className="mt-1 text-lg font-bold tracking-tight text-foreground md:text-2xl">
+              {formatInrDisplay(totalValue)}
+            </p>
           </CardContent>
         </Card>
         <Card className="shadow-sm">
           <CardContent className="p-4">
             <p className="text-xs font-medium text-muted-foreground">Total units (all lines)</p>
-            <p className="mt-1 text-2xl font-bold tracking-tight tabular-nums">{totalUnits.toLocaleString('en-IN')}</p>
+            <p className="mt-1 text-lg font-bold tracking-tight tabular-nums md:text-2xl">
+              {totalUnits.toLocaleString('en-IN')}
+            </p>
           </CardContent>
         </Card>
       </div>
@@ -419,7 +424,7 @@ export default function InventoryPage() {
         <CardContent className="pt-0">
           {loading ? (
             <p className="text-sm text-muted-foreground">Loading…</p>
-          ) : filtered.length === 0 ? (
+          ) : filtered.length === 0 && rows.length === 0 ? (
             <div className="flex min-h-[240px] flex-col items-center justify-center gap-3 text-center">
               <div className="flex h-14 w-14 items-center justify-center rounded-full bg-muted">
                 <Warehouse className="h-7 w-7 text-muted-foreground" />
@@ -430,69 +435,81 @@ export default function InventoryPage() {
                 Add your first line
               </Button>
             </div>
-          ) : (
-            <div className="overflow-x-auto">
-              <Table>
-                <TableHeader>
-                  <TableRow className="border-border/60 bg-muted/50 hover:bg-muted/50">
-                    <TableHead className="ui-table-head">Name</TableHead>
-                    <TableHead className="ui-table-head">Unit</TableHead>
-                    <TableHead className="ui-table-head text-right">On hand</TableHead>
-                    <TableHead className="ui-table-head text-right">Unit cost</TableHead>
-                    <TableHead className="ui-table-head text-right">Value</TableHead>
-                    <TableHead className="ui-table-head">Reorder</TableHead>
-                    <TableHead className="ui-table-head">Product</TableHead>
-                    <TableHead className="ui-table-head text-right w-[100px]">Actions</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {filtered.map((r) => {
-                    const low = isLowStock(r);
-                    const val = Number(r.current_stock) * Number(r.unit_cost);
-                    const linked = r.product_id ? products.find((p) => p.id === r.product_id) : null;
-                    return (
-                      <TableRow
-                        key={r.id}
-                        className={
-                          low
-                            ? 'bg-amber-50/80 hover:bg-amber-50 dark:bg-amber-950/25 dark:hover:bg-amber-950/35'
-                            : 'hover:bg-muted/40'
-                        }
-                      >
-                        <TableCell className="font-medium text-foreground">{r.name}</TableCell>
-                        <TableCell className="text-sm text-muted-foreground">{r.unit}</TableCell>
-                        <TableCell className="text-right tabular-nums">{r.current_stock}</TableCell>
-                        <TableCell className="text-right tabular-nums">{formatInrDisplay(Number(r.unit_cost))}</TableCell>
-                        <TableCell className="text-right font-semibold tabular-nums">{formatInrDisplay(val)}</TableCell>
-                        <TableCell className="tabular-nums text-sm">{r.reorder_level ?? '—'}</TableCell>
-                        <TableCell className="text-sm">
-                          {linked ? (
-                            <Badge variant="secondary" className="max-w-[180px] truncate">
-                              {linked.name}
-                              {linked.variant ? ` · ${linked.variant}` : ''}
-                            </Badge>
-                          ) : (
-                            <span className="text-muted-foreground">—</span>
-                          )}
-                        </TableCell>
-                        <TableCell className="text-right">
-                          <Button
-                            type="button"
-                            variant="ghost"
-                            size="icon"
-                            className="h-9 w-9"
-                            aria-label="Edit"
-                            onClick={() => startEdit(r)}
-                          >
-                            <Pencil className="h-4 w-4" />
-                          </Button>
-                        </TableCell>
-                      </TableRow>
-                    );
-                  })}
-                </TableBody>
-              </Table>
+          ) : filtered.length === 0 ? (
+            <div className="flex min-h-[200px] flex-col items-center justify-center gap-2 px-4 py-8 text-center">
+              <p className="text-sm font-medium text-foreground">No matching lines</p>
+              <p className="text-xs text-muted-foreground">Try a different search term.</p>
             </div>
+          ) : (
+            <>
+              <div className="md:hidden">
+                <InventoryMobileList rows={filtered} products={products} onEdit={startEdit} />
+              </div>
+              <div className="hidden md:block">
+                <div className="overflow-x-auto">
+                  <Table>
+                    <TableHeader>
+                      <TableRow className="border-border/60 bg-muted/50 hover:bg-muted/50">
+                        <TableHead className="ui-table-head">Name</TableHead>
+                        <TableHead className="ui-table-head">Unit</TableHead>
+                        <TableHead className="ui-table-head text-right">On hand</TableHead>
+                        <TableHead className="ui-table-head text-right">Unit cost</TableHead>
+                        <TableHead className="ui-table-head text-right">Value</TableHead>
+                        <TableHead className="ui-table-head">Reorder</TableHead>
+                        <TableHead className="ui-table-head">Product</TableHead>
+                        <TableHead className="ui-table-head text-right w-[100px]">Actions</TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {filtered.map((r) => {
+                        const low = isLowStock(r);
+                        const val = Number(r.current_stock) * Number(r.unit_cost);
+                        const linked = r.product_id ? products.find((p) => p.id === r.product_id) : null;
+                        return (
+                          <TableRow
+                            key={r.id}
+                            className={
+                              low
+                                ? 'bg-amber-50/80 hover:bg-amber-50 dark:bg-amber-950/25 dark:hover:bg-amber-950/35'
+                                : 'hover:bg-muted/40'
+                            }
+                          >
+                            <TableCell className="font-medium text-foreground">{r.name}</TableCell>
+                            <TableCell className="text-sm text-muted-foreground">{r.unit}</TableCell>
+                            <TableCell className="text-right tabular-nums">{r.current_stock}</TableCell>
+                            <TableCell className="text-right tabular-nums">{formatInrDisplay(Number(r.unit_cost))}</TableCell>
+                            <TableCell className="text-right font-semibold tabular-nums">{formatInrDisplay(val)}</TableCell>
+                            <TableCell className="tabular-nums text-sm">{r.reorder_level ?? '—'}</TableCell>
+                            <TableCell className="text-sm">
+                              {linked ? (
+                                <Badge variant="secondary" className="max-w-[180px] truncate">
+                                  {linked.name}
+                                  {linked.variant ? ` · ${linked.variant}` : ''}
+                                </Badge>
+                              ) : (
+                                <span className="text-muted-foreground">—</span>
+                              )}
+                            </TableCell>
+                            <TableCell className="text-right">
+                              <Button
+                                type="button"
+                                variant="ghost"
+                                size="icon"
+                                className="h-9 w-9"
+                                aria-label="Edit"
+                                onClick={() => startEdit(r)}
+                              >
+                                <Pencil className="h-4 w-4" />
+                              </Button>
+                            </TableCell>
+                          </TableRow>
+                        );
+                      })}
+                    </TableBody>
+                  </Table>
+                </div>
+              </div>
+            </>
           )}
         </CardContent>
       </Card>

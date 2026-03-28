@@ -33,13 +33,20 @@
     --radius-card: 1rem;
     --shadow-soft: 0 1px 3px 0 rgb(0 0 0 / 0.06), 0 4px 12px -2px rgb(0 0 0 / 0.05);
 
-    /* Layout (Phase A) — FAB clears mobile nav in one formula */
+    /* Layout — desktop sidebar; mobile: menu FAB + optional stacked page FAB */
     --sidebar-width: 240px;
-    --mobile-nav-height: 4rem;
+    --mobile-menu-fab-size: 3.5rem;
     --fab-gap: 0.75rem;
     --main-padding-x: 1rem;
     --main-padding-x-md: 1.5rem;
-    --main-bottom-mobile: calc(var(--mobile-nav-height) + 1.5rem);
+    --menu-fab-bottom-mobile: calc(1.25rem + env(safe-area-inset-bottom, 0px));
+    --page-fab-bottom-mobile: calc(
+      1.25rem + var(--mobile-menu-fab-size) + var(--fab-gap) + env(safe-area-inset-bottom, 0px)
+    );
+    --main-bottom-mobile: calc(
+      1.25rem + var(--mobile-menu-fab-size) + var(--fab-gap) + var(--mobile-menu-fab-size) + 1rem +
+        env(safe-area-inset-bottom, 0px)
+    );
     --main-bottom-desktop: 2rem;
 
     /* Semantic finance text (maps to primary / destructive; use utilities in pages later) */

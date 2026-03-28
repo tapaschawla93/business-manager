@@ -10,6 +10,8 @@ export type Vendor = {
   notes: string | null;
   /** Optional postal / street summary (PRD v2.4.2). */
   address: string | null;
+  /** Soft archive; null = active (RLS hides archived rows from normal selects). */
+  deleted_at: string | null;
   created_at: string;
   updated_at: string;
 };

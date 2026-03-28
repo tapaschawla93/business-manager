@@ -11,7 +11,7 @@
 **Applies to all product modules** in this PRD (`prd.v1.3.*`, `prd.v2.4.*`, `prd.v3.5.*`, `exec.v2.*`, and any future execution blocks such as `exec.v3.*`).
 
 1. **Full-stack delivery:** Each module ships **together**: **backend** (schema, migrations, RLS, RPCs or queries) **and** **functionality** **and** **UI** **and** **UX**. Do not merge “backend only” and defer screens to a later pass unless explicitly split in a written exception (default: **not allowed**).
-2. **Design language:** All new surfaces **must match the existing app** — same **visual system** and interaction patterns as shipped modules (e.g. `AppChrome` / sidebar + mobile bottom nav, `PageHeader`, cards, shadcn-style `Dialog` / `Sheet` / `AlertDialog`, **Sonner** toasts, primary **#16a34a**, neutral canvas, `rounded-xl` controls, **₹** via `formatInrDisplay`, FAB rules where applicable). Reuse **existing components** before introducing one-offs; **`prd.design.7`** (mobile-first, 375px, 44px targets) is part of every acceptance criteria.
+2. **Design language:** All new surfaces **must match the existing app** — same **visual system** and interaction patterns as shipped modules (e.g. `AppChrome` / sidebar + **mobile slide-over menu (menu FAB)**, `PageHeader`, cards, shadcn-style `Dialog` / `Sheet` / `AlertDialog`, **Sonner** toasts, primary **#16a34a**, neutral canvas, `rounded-xl` controls, **₹** via `formatInrDisplay`, FAB rules where applicable). Reuse **existing components** before introducing one-offs; **`prd.design.7`** (mobile-first, 375px, 44px targets) is part of every acceptance criteria.
 3. **Polish is in-scope:** Loading, empty, and error states, feedback on save/archive, and **internal navigation** via `next/link` — same bar as the rest of the product.
 
 ---
@@ -38,7 +38,7 @@
 | `prd.v2.4.3` | Manual Inventory (V2) |
 | `prd.v2.4.4` | Dashboard v2 additions |
 | `prd.v2.4.5` | V2 Data Model — additions |
-| `prd.v2.mobile-polish` | Mobile Polish — Post V2 (Sales accordion rows) |
+| `prd.v2.mobile-polish` | Mobile Polish — Post V2 (Sales accordion rows; **mobile shell** — menu FAB + left slide-over nav) |
 | `prd.v3` | Version 3 — Full Automation (full) |
 | `prd.v3.5.1` — `prd.v3.5.7` | V3 features & data model |
 | `prd.6` | Full data model (all versions) |
@@ -318,6 +318,16 @@ Ship **one execution module at a time**. Each module is **complete**: migrations
 - Profit shown in `text-finance-positive` / `text-finance-negative` token (same as dashboard KPIs)
 - Animate open/close with a subtle height transition (respect `prefers-reduced-motion`)
 
+### Mobile shell — primary navigation (slide-over menu)
+
+**Shipped / target:** On viewports below **`md`**, the **fixed bottom tab bar is removed**. Primary navigation matches the **desktop sidebar item set** (`MAIN_NAV_ITEMS` from `lib/nav.ts` — Dashboard, Products, Sales, Expenses, Vendors, Inventory): **logout** and **user block** stay with the same hierarchy as desktop.
+
+- **Interaction:** A **circular FAB** fixed **bottom-right** (same visual weight as module FABs e.g. “Add product”) **toggles** a **slide-over panel from the left** (e.g. shadcn **Sheet** `side="left"`). When the panel is open, the same control can **close** it (toggle); overlay tap / close control also dismisses.
+- **Stacking:** Module FABs (Products, Expenses, Sales quick actions) sit **above** the menu FAB on the **z** axis / bottom offset so both remain reachable; main content **bottom padding** clears **two** stacked FABs where applicable.
+- **Desktop (`md`+):** Unchanged — persistent **left sidebar** only; no mobile menu FAB.
+
+**Relationship to `prd.design.7`:** For this product, **mobile primary nav** is **not** a bottom tab bar; it is this **left sheet + menu FAB**. Breakpoint table in **`prd.design.7.2`** for “&lt; 640px” should be read as **single column + this menu pattern** (not “bottom nav”).
+
 ---
 
 ## `prd.v3` — Version 3 — Full Automation
@@ -449,14 +459,14 @@ Ship **one execution module at a time**. Each module is **complete**: migrations
 - One-thumb use at **375px**; targets **≥ 44px** height.
 - No horizontal scroll at ≥375px.
 - Numeric keyboard for price, qty, phone.
-- **Bottom nav** for primary actions on mobile (not sidebar-only).
+- **Mobile primary nav:** slide-over **menu** from the left, toggled by a **bottom-right FAB** — same destinations as the desktop sidebar (`prd.v2.mobile-polish` — Mobile shell). **No** fixed bottom tab bar for main module switching.
 - Prefer **modals / bottom sheets** for quick entry.
 
 ### `prd.design.7.2` — Breakpoints
 
 | Breakpoint | Layout |
 |------------|--------|
-| &lt; 640px | Single column, bottom nav, stacked KPIs |
+| &lt; 640px | Single column, **menu FAB + slide-over nav**, stacked KPIs |
 | 640–1024px | Two-column forms, optional side nav |
 | &gt; 1024px | Sidebar, multi-column tables, expanded dashboard |
 

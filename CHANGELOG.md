@@ -12,27 +12,31 @@ All notable changes to this project are documented here. Format loosely follows 
 - **`lib/inventory/importInventoryCsv.ts`**, **`stubProduct.ts`**, **`lib/types/inventoryItem.ts`**; **`importCsv`:** `getAddToProductsFlag` (accepts `add_to_section` header alias).
 - **`lib/devLog.ts`:** `devError` — logs import failures in **development** only (alongside toasts).
 - **`lib/queries/inventoryItems.ts`:** explicit `inventory_items` column list + row mapper (not `select('*')`).
-- **UI Overhaul (V1):** shadcn-style components under `components/ui/` (Button, Card, Input, Table, Dialog, Sheet, Popover, Command, AlertDialog, Sonner, etc.), **`#16a34a`** primary tokens in `globals.css`, **`AppChrome` / `AppShell`** with **240px sidebar** (desktop) and **64px bottom nav** (mobile), **`Fab`** on Products + Expenses. **BizManager** branding in sidebar. **Sonner** toasts; archive confirmations via **Dialog/AlertDialog** (replaces `window.confirm`). Login remains **minimal centered card** (no shell). Sales **product search** uses **Popover + cmdk** (same client product list as before).
+- **UI Overhaul (V1):** shadcn-style components under `components/ui/` (Button, Card, Input, Table, Dialog, Sheet, Popover, Command, AlertDialog, Sonner, etc.), **`#16a34a`** primary tokens in `globals.css`, **`AppChrome` / `AppShell`** with **240px sidebar** (desktop) and **mobile menu FAB + slide-over nav** (post–bottom-bar era), **`Fab`** on Products + Expenses. **BizManager** branding in sidebar. **Sonner** toasts; archive confirmations via **Dialog/AlertDialog** (replaces `window.confirm`). Login remains **minimal centered card** (no shell). Sales **product search** uses **Popover + cmdk** (same client product list as before).
 - Added `components/layout/Sidebar.tsx` (standalone desktop sidebar component): fixed 240px rail, nav icons, active-state styling, user badge, and logout action. Not wired by default.
 - **Bulk upload hub (Settings):** Added CSV template download + CSV upload for **Products**, **Expenses**, and **Sales** (`sale_ref` grouped line-item format). Imports support partial success and downloadable error CSV reports.
 - Added shared CSV import helpers in `lib/importCsv.ts` (parse, typed getters, error report CSV builder).
 - Added module-level bulk controls on **Products**, **Sales**, and **Expenses** screens (Template + Bulk Upload) in addition to Settings.
-- **Docs:** `docs/PRD.md` — `prd.v2.4.3` manual inventory delivery notes; `prd.v2.mobile-polish` (accordion Sales list **not implemented** — wide `Table` remains).
-- **Docs:** `docs/knowledgebase.md` — manual inventory ledger vs `inventory_items`, RLS vs **`SECURITY DEFINER`** sync triggers, Next “plain HTML” / `.next` / port, React async session effect hygiene, vendors migration baseline, `lib/nav` single source.
+- **Docs:** `docs/PRD.md` — `prd.v2.4.3` manual inventory delivery notes; `prd.v2.mobile-polish` (**mobile shell** + **Sales accordion** on small screens).
+- **Docs:** `docs/knowledgebase.md` — manual inventory ledger vs `inventory_items`, RLS vs **`SECURITY DEFINER`** sync triggers, Next “plain HTML” / `.next` / port, React async session effect hygiene, vendors migration baseline, `lib/nav` single source, **Dashboard v2** (date range RPCs, timeouts, Strict Mode bootstrap, stale fetch guard).
 
 - Multi-tenant shell: `businesses` + `profiles`, `create_business_for_user` onboarding RPC, `current_business_id()` for RLS.
 - **Products** (`/products`): CRUD, optional `variant`, ₹ display via `formatInrDisplay`, soft archive (`deleted_at`); archive via **`archive_product` RPC** (client calls RPC, not raw update).
 - **Sales** (`/sales`): mobile-first form, `save_sale` RPC (server reads MRP/cost from DB; client sends `product_id` + `qty` + `sale_price` only). `sale_items` written only inside RPC.
 - **Expenses** (`/expenses`): table + RLS; list/form; archive via **`archive_expense` RPC**.
 - **Settings** (`/settings`): CSV export for active rows — products, sales, sale_items, expenses (`deleted_at IS NULL` where applicable).
-- **Nav**: Logged-in shell = **`AppShell`** + **`MobileBottomNav`**, items from **`lib/nav.ts`** (`MAIN_NAV_ITEMS`); sign-out in sidebar. Internal routes use **`next/link`**. **lucide-react** icons (nav + KPI cards).
+- **Nav**: Logged-in shell = **`AppShell`** — desktop **sidebar**; mobile **menu FAB** (bottom-right) toggles **left Sheet** with same **`MAIN_NAV_ITEMS`** + logout/user (no bottom tab bar). Internal routes use **`next/link`**. **lucide-react** icons (nav + KPI cards).
 - **Shared**: `PaymentToggle` in `components/` for sales + expenses.
-- **Dashboard** (`/` when logged in): read-only KPIs + top 5 by revenue / avg margin %; loads **`get_dashboard_kpis`** + **`get_top_products`** (`lib/queries/dashboard.ts`, `components/dashboard/KPICard`, `TopProductsTable`). All-time scope; `deleted_at IS NULL` on sales/expenses in RPCs.
-- Migrations under `supabase/migrations/` (products, foundation soft-delete + sales, JSON loop fix for `save_sale`, sprint2 `save_sale` WHERE + triggers, expenses, RLS soft-delete policies, archive RPCs, **dashboard V1 RPCs**). `supabase/schema.sql` kept in sync for greenfield.
+- **Dashboard v2** (`/`): **from–to** dates (default **YTD**); RPCs **`get_dashboard_kpis(p_from,p_to)`** + **`get_top_products(p_from,p_to)`** — period revenue/expenses, **gross_profit**, **cash_collected** / **online_collected**, sales count, avg sale; **inventory_value** not range-filtered. JSON: **top_by_revenue**, **top_by_margin**, **top_by_volume**, **sales_by_category** (non-deleted products). **`PaymentCollectionsCard`**, **`SalesByCategoryTable`**, **`TopProductsTable`**. **`lib/queries/dashboard.ts`**, **`defaultDashboardYtdRange()`**. Migration **`20260330140000_dashboard_v2_date_range.sql`** (drops zero-arg RPCs); greenfield **`supabase/schema.sql`** aligned.
+- **Session / shell:** **`lib/auth/useBusinessSession.ts`** (`getUser` + **`profiles`**, **`withTimeout`**, Strict Mode **gen ref**). **`PageLoadingSkeleton`**, **`SessionRedirectNotice`**. Shell pages (products, sales, expenses, inventory, vendors, settings, …) use hook + skeleton/redirect pattern. **`isSupabaseConfigured()`**, **`MissingSupabaseConfig`**, **`AppChrome`** gate. **`AppShell`** logout → **`window.location.assign('/login')`**. Shared **`lib/withTimeout.ts`**.
+- Migrations under `supabase/migrations/` (products, foundation soft-delete + sales, JSON loop fix for `save_sale`, sprint2 `save_sale` WHERE + triggers, expenses, RLS soft-delete policies, archive RPCs, **dashboard v2 date-range RPCs**, **vendors archive**). `supabase/schema.sql` kept in sync for greenfield.
 
 ### Changed
 
-- **Home** (`app/page.tsx`): business dashboard after auth (KPI cards, secondary metrics, top-product tables + loading/error states), not a minimal placeholder.
+- **Sales (`/sales`):** below **`md`**, **accordion** list replaces wide table (`SalesMobileList`); **`fetchSalesList`** returns **`lines`** + **`total_profit` / `total_cost`**. Desktop table unchanged (`prd.v2.mobile-polish`).
+- **Mobile shell:** **`MobileBottomNav`** removed; **`AppShell`** uses **menu FAB** + **`Sheet`** from left (`prd.v2.mobile-polish`). Module **FAB**s offset above menu FAB via **`globals.css`** tokens.
+- **Home** (`app/page.tsx`): dashboard v2 UI + **`useBusinessSession`** (same as shell routes); **`withTimeout`** on KPI fetch; **load gen ref** ignores stale RPC after range change; session vs data skeleton copy.
+- **Breaking (Supabase):** zero-arg **`get_dashboard_kpis`** / **`get_top_products`** removed — apply **`20260330140000_dashboard_v2_date_range.sql`** before/with this client.
 - Login: sign-in / sign-up aligned with onboarding RPC; email-confirmation path documented in UI.
 - `save_sale` final `UPDATE sales` includes `business_id` guard (migration + schema).
 - **Products** (`app/products/page.tsx`) UI rebuilt to shadcn dashboard layout: new header + CTA, searchable table (Name/Category/MRP/Cost/Margin%/Actions), color-coded margin %, centered empty state, dialog-based add/edit + archive confirmation, and toast-based feedback. Supabase reads/writes/RPC flow unchanged.
@@ -40,7 +44,8 @@ All notable changes to this project are documented here. Format loosely follows 
 - **Sales UI:** New Sale form now supports optional customer name/phone/address and optional sale type; Sales list header renamed from **Status** to **Mode of payment**.
 - **Sales UI flow:** In New Sale, line entry now starts with product search, followed by qty/price, then add-more; sale/customer/date details remain below line items.
 - Removed redundant per-page export CTA/buttons from **Sales** and **Expenses** pages; Settings remains the centralized export surface.
-- **Vendors (V2 slice):** `vendors.contact_person` and `vendors.address` (nullable). Vendors page: extended create form, directory table columns, CSV template + bulk upload (partial success + error CSV). Vendor detail shows contact/address. **Expenses:** optional `VendorPicker` sets `vendor_id` + `vendor_name`; editing the name or clearing the picker drops `vendor_id` (free-text does not auto-create a vendor). **`lib/nav.ts`:** `/vendors` on **Dashboard → Products → Sales → Expenses → Vendors** for **AppShell** + **MobileBottomNav** (standalone `components/layout/Sidebar.tsx` also lists Vendors if reused).
+- **Vendors (V2 slice):** `vendors.contact_person` and `vendors.address` (nullable). Vendors page: extended create form, directory table columns, CSV template + bulk upload (partial success + error CSV). Vendor detail shows contact/address. **Expenses:** optional `VendorPicker` sets `vendor_id` + `vendor_name`; editing the name or clearing the picker drops `vendor_id` (free-text does not auto-create a vendor). **`lib/nav.ts`:** `/vendors` on **Dashboard → Products → Sales → Expenses → Vendors** in shell nav (standalone `components/layout/Sidebar.tsx` also lists Vendors if reused).
+- **Vendors archive:** `vendors.deleted_at`, RLS hides archived; unique **active** name per tenant (`vendors_business_name_active_uidx`); **`archive_vendor`** RPC; list + detail archive (Dialog). **`lib/queries/vendors`:** `archiveVendor`, active fetches filter `deleted_at`. Migration **`20260331120000_vendors_soft_delete_archive.sql`**.
 - **DB migration:** `20260327200000_vendors_contact_address.sql` — baseline `CREATE TABLE IF NOT EXISTS public.vendors` + `ADD COLUMN` for PRD fields + `expenses.vendor_id` / `product_id` + `expenses_validate_refs` when `vendors` or FK columns were missing (safe if `20260326120000_inventory_vendors.sql` never ran).
 - **Sales / Settings bulk CSV:** sales import uses `try`/`finally` + shared lookup map (same semantics as inventory CSV).
 
@@ -55,6 +60,8 @@ All notable changes to this project are documented here. Format loosely follows 
 - **Soft-delete UX**: archive no longer chains `.select()` after update (RETURNING vs SELECT RLS on archived rows); products/expenses archive use definer RPCs for reliable `deleted_at`.
 - **Sales form**: removing the only line resets to a fresh empty line; **`save_sale`** JSON response validated before showing ₹ totals (amber fallback if payload incomplete).
 - **Dashboard**: bad or unparseable **`get_top_products`** JSONB → returned **error** (surface in UI), not silent empty top-product tables; string JSONB coerced via `JSON.parse` when needed.
+- **Dashboard:** invalid / incomplete **`get_dashboard_kpis`** row → **error** (not “no data” silent path).
+- **`withTimeout`:** **`settled`** guard — late resolve after timeout does not double-settle outer Promise.
 - **Expense edit runtime errors**: removed writes to `product_id` when column/deploy mismatch caused failures; `vendor_id` is supported again when present in schema.
 - **Expense list table semantics**: replaced confusing `Stock` column with `Units` and bound it to entered quantity values.
 - **Bulk import reliability**: Products/Expenses imports now insert row-by-row for true partial success; one bad row no longer blocks all valid rows.
@@ -62,5 +69,5 @@ All notable changes to this project are documented here. Format loosely follows 
 
 ### Security
 
-- RLS on tenant tables; no client INSERT on `sale_items`; `save_sale` / `archive_*` / **`get_dashboard_kpis`** / **`get_top_products`** RPCs are `SECURITY DEFINER` with `auth.uid()` + `current_business_id()` / `business_id` scoping inside the function.
+- RLS on tenant tables; no client INSERT on `sale_items`; `save_sale` / `archive_product` / `archive_expense` / **`archive_vendor`** / **`get_dashboard_kpis(date,date)`** / **`get_top_products(date,date)`** RPCs are `SECURITY DEFINER` with `auth.uid()` + `current_business_id()` / `business_id` scoping inside the function; execute granted to **`authenticated`** only (not `public`).
 - Inventory ledger sync trigger functions **`SECURITY DEFINER`** with **`SET search_path = public`**; updates scoped by **`NEW.business_id`** / **`NEW.product_id`** only.

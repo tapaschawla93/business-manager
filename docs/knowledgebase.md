@@ -180,6 +180,33 @@
 
 ---
 
+## Dashboard v2 — date range, payment split & resilient client loading
+
+### Level 1 — Core concept
+
+- **What**: The home dashboard is **scoped to a from–to date range** (default **YTD** in the browser calendar). **`get_dashboard_kpis(p_from, p_to)`** and **`get_top_products(p_from, p_to)`** return aggregates only for **`sales.date`** / **`expenses.date`** in that window (inventory value stays **point-in-time**, not range-filtered). The UI adds **cash vs online collections** from **`payment_mode`**, **sales by category**, and **top products by volume**—plus clearer naming so **net profit** is not confused with “cash in hand.”
+- **Why**: Operators think in **periods** (month, quarter, YTD); V1 all-time totals misread seasonal businesses. Server-side range filters keep one source of truth and avoid shipping raw rows.
+- **When**: Any reporting surface where “this quarter” must mean **the same thing** in SQL and UI.
+- **Fit**: **`app/page.tsx`** + **`lib/queries/dashboard.ts`**; migration **`20260330140000_dashboard_v2_date_range.sql`** replaces **zero-arg** RPC signatures—client and DB must stay in lockstep.
+
+### Level 2 — How it works
+
+- **RPC contract**: Both functions **`raise`** if unauthenticated, missing dates, **`from > to`**, or **`current_business_id()`** is null. **`SECURITY DEFINER`** + **`SET search_path = public`**; **`REVOKE ALL … FROM public`**, **`GRANT EXECUTE … TO authenticated`**—same narrow exposure pattern as other definer entry points.
+- **KPI semantics (v2)**: **`gross_profit`** = period revenue − period expenses; **`cash_collected`** / **`online_collected`** = **`SUM(total_amount)`** filtered by **`payment_mode`**—not the old ambiguous **`cash_in_hand`** name.
+- **Client parsing**: **`getTopProducts`** already rejected malformed JSONB; **`getDashboardKPIs`** should return an **`Error`** if the row is missing or numeric fields don’t parse—never **`{ data: null, error: null }`**, or users see **“No dashboard data”** for a broken contract.
+- **Auth & loading**: **`useBusinessSession`** runs **`getUser` + `profiles.business_id`** once with **`withTimeout`** and a **generation ref** so React **Strict Mode** double-mounts cannot leave **`loading`** stuck when an **old** async run resolves after cleanup. The home page should use the **same hook** as other shell routes—not a one-off session effect.
+- **In-flight dashboard fetches**: **`withTimeout`** does **not** cancel Supabase HTTP—if the user changes the range quickly, a **slower older response** could still arrive. A **per-load generation counter** (`loadDashboardGenRef`): only the **latest** run may **`setKpis` / `setTopProducts` / `setLoadingDashboard(false)`** in **`finally`**. **`withTimeout`** uses a **`settled`** flag so a late fulfillment after timeout does not double-settle the outer Promise.
+- **Logout**: After **`signOut`**, **`window.location.assign('/login')`** avoids “clicked Logout but UI stuck” when client routing or state is wedged.
+
+### Level 3 — Deep dive
+
+- **Strict Mode**: In dev, effects run **mount → cleanup → mount**. A **`cancelled` boolean** alone is fine for **one** effect, but if you **return early** without ever calling **`setStatus`**, a **second** in-flight promise from an earlier mount can still resolve and leave UI inconsistent—**generation refs** (compare **`gen === ref.current`**) are the durable pattern for **any** async bootstrap.
+- **Timeouts vs AbortController**: **`withTimeout`** is **wall-clock abandonment** for UX, not network cancellation; the browser may still complete the request. For true cancel, you’d need fetch **`AbortSignal`** (where the client supports it) **plus** the same stale guard for any path that mutates React state.
+- **Operational failure mode**: If the remote DB still has **old zero-arg** RPCs, PostgREST errors or hung behavior until migration **`20260330140000`** is applied—timeout copy can point PMs at that migration name.
+- **Senior lens**: Treat **dashboard RPCs + `lib/queries` parsers** as one **versioned API**; ship migrations before or with the client change, and fail **loud** on shape drift instead of empty states.
+
+---
+
 ## Bulk upload (V1 wrap-up) — templates, partial success, and dates
 
 ### Level 1 — Core concept
@@ -240,7 +267,7 @@
 
 ### Navigation (shell) — single source
 
-- **`lib/nav.ts`**: Exports `MAIN_NAV_ITEMS` and `isMainNavActive()`. **`AppShell`** (desktop sidebar) and **`MobileBottomNav`** both import **only** this module, so adding a route (e.g. `/vendors`, **`/inventory` last**) updates **two surfaces with one edit**.
+- **`lib/nav.ts`**: Exports `MAIN_NAV_ITEMS` and `isMainNavActive()`. **`AppShell`** renders the same items on **desktop sidebar** and **mobile left Sheet** (menu FAB toggles); one module edit updates both.
 - **`components/layout/Sidebar.tsx`**: Older standalone spec; **not** wired by `AppChrome` today—if reused, keep its `NAV_ITEMS` aligned with `MAIN_NAV_ITEMS` or delete to avoid drift.
 
 ### Local development — Next.js dev server

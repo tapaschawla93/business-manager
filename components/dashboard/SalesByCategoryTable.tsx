@@ -9,12 +9,12 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 export function SalesByCategoryTable({ rows }: { rows: CategorySalesRow[] }) {
   return (
     <Card>
-      <CardHeader className="pb-2">
-        <CardTitle className="ui-section-title">Sales by category</CardTitle>
-        <p className="text-xs font-normal text-muted-foreground">Active products only (excludes archived).</p>
+      <CardHeader className="space-y-1 p-4 pb-2 md:space-y-1.5 md:p-6">
+        <CardTitle className="ui-section-title text-sm md:text-base">Sales by category</CardTitle>
+        <p className="text-[11px] font-normal text-muted-foreground md:text-xs">Active products only (excludes archived).</p>
       </CardHeader>
-      <CardContent className="pt-0">
-        <Table>
+      <CardContent className="px-2 pb-3 pt-0 md:px-6 md:pb-6">
+        <Table className="text-xs md:text-sm [&_td]:px-3 [&_td]:py-2.5 [&_th]:h-10 [&_th]:px-3 [&_th]:py-2 md:[&_td]:px-6 md:[&_td]:py-4 md:[&_th]:h-12 md:[&_th]:px-6 md:[&_th]:py-4">
           <TableHeader>
             <TableRow>
               <TableHead className="w-10">#</TableHead>

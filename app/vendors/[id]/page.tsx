@@ -3,18 +3,26 @@
 import { useCallback, useEffect, useState } from 'react';
 import Link from 'next/link';
 import { useParams, useRouter } from 'next/navigation';
-import { ArrowLeft, RefreshCw } from 'lucide-react';
+import { ArrowLeft, RefreshCw, Trash2 } from 'lucide-react';
 import { getSupabaseClient } from '@/lib/supabaseClient';
-import { fetchVendorById } from '@/lib/queries/vendors';
+import { archiveVendor, fetchVendorById } from '@/lib/queries/vendors';
 import { fetchActiveExpenses } from '@/lib/queries/expenses';
 import type { Vendor } from '@/lib/types/vendor';
 import type { Expense } from '@/lib/types/expense';
 import { formatInrDisplay } from '@/lib/formatInr';
 import { Button } from '@/components/ui/button';
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog';
 import { Card, CardContent, CardHeader } from '@/components/ui/card';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { PageLoadingSkeleton } from '@/components/layout/PageLoadingSkeleton';
 import { SessionRedirectNotice } from '@/components/SessionRedirectNotice';
+import { toast } from 'sonner';
 
 function formatDateShort(iso: string): string {
   try {
@@ -34,6 +42,8 @@ export default function VendorDetailPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [authRedirect, setAuthRedirect] = useState(false);
+  const [archiveOpen, setArchiveOpen] = useState(false);
+  const [archiving, setArchiving] = useState(false);
 
   const load = useCallback(async () => {
     if (!id) return;
@@ -69,6 +79,21 @@ export default function VendorDetailPage() {
       setLoading(false);
     }
   }, [id, router]);
+
+  async function confirmArchive() {
+    if (!id) return;
+    setArchiving(true);
+    const supabase = getSupabaseClient();
+    const { error } = await archiveVendor(supabase, id);
+    setArchiving(false);
+    setArchiveOpen(false);
+    if (error) {
+      toast.error(error.message);
+      return;
+    }
+    toast.success('Vendor archived');
+    router.replace('/vendors');
+  }
 
   useEffect(() => {
     void load();
@@ -112,10 +137,22 @@ export default function VendorDetailPage() {
           <h1 className="ui-page-title">{vendor.name}</h1>
           <p className="mt-1 ui-page-description">Vendor profile and recorded expenses.</p>
         </div>
-        <Button type="button" variant="outline" size="sm" onClick={() => void load()} className="gap-2">
-          <RefreshCw className="h-4 w-4" />
-          Refresh
-        </Button>
+        <div className="flex flex-wrap gap-2">
+          <Button type="button" variant="outline" size="sm" onClick={() => void load()} className="gap-2">
+            <RefreshCw className="h-4 w-4" />
+            Refresh
+          </Button>
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            className="gap-2 border-destructive/50 text-destructive hover:bg-destructive/10"
+            onClick={() => setArchiveOpen(true)}
+          >
+            <Trash2 className="h-4 w-4" />
+            Archive
+          </Button>
+        </div>
       </div>
 
       <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
@@ -195,6 +232,30 @@ export default function VendorDetailPage() {
           )}
         </CardContent>
       </Card>
+
+      <Dialog open={archiveOpen} onOpenChange={setArchiveOpen}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>Archive vendor</DialogTitle>
+            <DialogDescription>
+              Hides this vendor from the directory and picker. Linked expenses remain unchanged.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
+            <Button type="button" variant="outline" onClick={() => setArchiveOpen(false)} disabled={archiving}>
+              Cancel
+            </Button>
+            <Button
+              type="button"
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+              disabled={archiving}
+              onClick={() => void confirmArchive()}
+            >
+              {archiving ? 'Archiving…' : 'Archive'}
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

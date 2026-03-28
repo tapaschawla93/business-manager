@@ -25,7 +25,6 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog';
-import { Fab } from '@/components/Fab';
 import { Download, Plus, Upload } from 'lucide-react';
 import { downloadCsv, rowsToCsv } from '@/lib/exportCsv';
 import {
@@ -263,8 +262,6 @@ export default function ExpensesPage() {
         onArchive={requestArchive}
         onRefresh={() => void loadExpenses()}
       />
-
-      <Fab aria-label="New expense" onClick={openNew} />
 
       <Dialog open={dialogOpen} onOpenChange={handleDialogOpenChange}>
         <DialogContent className="max-h-[min(90vh,720px)] overflow-y-auto sm:max-w-lg">

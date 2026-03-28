@@ -310,12 +310,16 @@ create table if not exists public.vendors (
   email text,
   address text,
   notes text,
+  deleted_at timestamptz,
   created_at timestamptz not null default now(),
-  updated_at timestamptz not null default now(),
-  constraint vendors_business_name_key unique (business_id, name)
+  updated_at timestamptz not null default now()
 );
 
 create index if not exists vendors_business_id_idx on public.vendors (business_id);
+
+create unique index if not exists vendors_business_name_active_uidx
+  on public.vendors (business_id, name)
+  where deleted_at is null;
 
 drop trigger if exists set_vendors_updated_at on public.vendors;
 create trigger set_vendors_updated_at
@@ -332,7 +336,10 @@ drop policy if exists "vendors_update" on public.vendors;
 create policy "vendors_select"
   on public.vendors
   for select
-  using (business_id = public.current_business_id());
+  using (
+    business_id = public.current_business_id()
+    and deleted_at is null
+  );
 
 create policy "vendors_insert"
   on public.vendors
@@ -342,8 +349,19 @@ create policy "vendors_insert"
 create policy "vendors_update"
   on public.vendors
   for update
-  using (business_id = public.current_business_id())
-  with check (business_id = public.current_business_id());
+  using (
+    business_id = public.current_business_id()
+    and deleted_at is null
+  )
+  with check (
+    exists (
+      select 1
+      from public.profiles p
+      where p.id = auth.uid()
+        and p.deleted_at is null
+        and p.business_id = business_id
+    )
+  );
 
 -- -----------------------------------------------------------------------------
 -- 4c) Inventory ledger (per product) + manual inventory_items (V2)
@@ -830,6 +848,43 @@ $$;
 
 revoke all on function public.archive_expense(uuid) from public;
 grant execute on function public.archive_expense(uuid) to authenticated;
+
+create or replace function public.archive_vendor(p_vendor_id uuid)
+returns void
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_bid uuid;
+begin
+  if auth.uid() is null then
+    raise exception 'Not authenticated';
+  end if;
+
+  select p.business_id into v_bid
+  from public.profiles p
+  where p.id = auth.uid()
+    and p.deleted_at is null;
+
+  if v_bid is null then
+    raise exception 'No business context';
+  end if;
+
+  update public.vendors
+  set deleted_at = now()
+  where id = p_vendor_id
+    and business_id = v_bid
+    and deleted_at is null;
+
+  if not found then
+    raise exception 'Vendor not found, already archived, or access denied';
+  end if;
+end;
+$$;
+
+revoke all on function public.archive_vendor(uuid) from public;
+grant execute on function public.archive_vendor(uuid) to authenticated;
 
 -- -----------------------------------------------------------------------------
 -- Dashboard RPCs (read-only): date-scoped KPIs, top products, category split

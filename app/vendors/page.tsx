@@ -3,7 +3,7 @@
 import { FormEvent, useCallback, useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
 import { toast } from 'sonner';
-import { Download, Plus, RefreshCw, Truck, Upload } from 'lucide-react';
+import { Download, Plus, RefreshCw, Trash2, Truck, Upload } from 'lucide-react';
 import { downloadCsv, rowsToCsv } from '@/lib/exportCsv';
 import {
   buildImportIssuesCsv,
@@ -13,7 +13,7 @@ import {
   type ImportIssue,
 } from '@/lib/importCsv';
 import { getSupabaseClient } from '@/lib/supabaseClient';
-import { fetchActiveVendors } from '@/lib/queries/vendors';
+import { archiveVendor, fetchActiveVendors } from '@/lib/queries/vendors';
 import type { Vendor } from '@/lib/types/vendor';
 import { PageHeader } from '@/components/PageHeader';
 import { PageLoadingSkeleton } from '@/components/layout/PageLoadingSkeleton';
@@ -31,6 +31,7 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
+import { VendorsMobileList } from '@/app/vendors/components/VendorsMobileList';
 
 export default function VendorsPage() {
   const session = useBusinessSession({ onMissingBusiness: 'redirect-home' });
@@ -48,6 +49,7 @@ export default function VendorsPage() {
   const [address, setAddress] = useState('');
   const [notes, setNotes] = useState('');
   const [saving, setSaving] = useState(false);
+  const [archiveTargetId, setArchiveTargetId] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     if (!businessId) return;
@@ -163,6 +165,20 @@ export default function VendorsPage() {
     await load();
   }
 
+  async function confirmArchive() {
+    const vid = archiveTargetId;
+    if (!businessId || !vid) return;
+    setArchiveTargetId(null);
+    const supabase = getSupabaseClient();
+    const { error: arcErr } = await archiveVendor(supabase, vid);
+    if (arcErr) {
+      toast.error(arcErr.message);
+      return;
+    }
+    toast.success('Vendor archived');
+    await load();
+  }
+
   if (session.kind === 'loading') {
     return <PageLoadingSkeleton />;
   }
@@ -247,34 +263,54 @@ export default function VendorsPage() {
               </Button>
             </div>
           ) : (
-            <div className="overflow-x-auto">
-              <Table>
-                <TableHeader>
-                  <TableRow className="border-border/60 bg-muted/50 hover:bg-muted/50">
-                    <TableHead className="ui-table-head">Name</TableHead>
-                    <TableHead className="ui-table-head">Phone</TableHead>
-                    <TableHead className="ui-table-head">Contact</TableHead>
-                    <TableHead className="ui-table-head">Address</TableHead>
-                    <TableHead className="ui-table-head">Email</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {vendors.map((v) => (
-                    <TableRow key={v.id} className="hover:bg-muted/40">
-                      <TableCell className="font-medium">
-                        <Link href={`/vendors/${v.id}`} className="text-primary hover:underline">
-                          {v.name}
-                        </Link>
-                      </TableCell>
-                      <TableCell className="text-muted-foreground">{v.phone ?? '—'}</TableCell>
-                      <TableCell className="text-muted-foreground">{v.contact_person ?? '—'}</TableCell>
-                      <TableCell className="max-w-[200px] truncate text-muted-foreground">{v.address ?? '—'}</TableCell>
-                      <TableCell className="max-w-[160px] truncate text-muted-foreground">{v.email ?? '—'}</TableCell>
-                    </TableRow>
-                  ))}
-                </TableBody>
-              </Table>
-            </div>
+            <>
+              <div className="md:hidden">
+                <VendorsMobileList vendors={vendors} onArchive={(id) => setArchiveTargetId(id)} />
+              </div>
+              <div className="hidden md:block">
+                <div className="overflow-x-auto">
+                  <Table>
+                    <TableHeader>
+                      <TableRow className="border-border/60 bg-muted/50 hover:bg-muted/50">
+                        <TableHead className="ui-table-head">Name</TableHead>
+                        <TableHead className="ui-table-head">Phone</TableHead>
+                        <TableHead className="ui-table-head">Contact</TableHead>
+                        <TableHead className="ui-table-head">Address</TableHead>
+                        <TableHead className="ui-table-head">Email</TableHead>
+                        <TableHead className="ui-table-head w-[100px] text-right">Actions</TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {vendors.map((v) => (
+                        <TableRow key={v.id} className="hover:bg-muted/40">
+                          <TableCell className="font-medium">
+                            <Link href={`/vendors/${v.id}`} className="text-primary hover:underline">
+                              {v.name}
+                            </Link>
+                          </TableCell>
+                          <TableCell className="text-muted-foreground">{v.phone ?? '—'}</TableCell>
+                          <TableCell className="text-muted-foreground">{v.contact_person ?? '—'}</TableCell>
+                          <TableCell className="max-w-[200px] truncate text-muted-foreground">{v.address ?? '—'}</TableCell>
+                          <TableCell className="max-w-[160px] truncate text-muted-foreground">{v.email ?? '—'}</TableCell>
+                          <TableCell className="text-right">
+                            <Button
+                              type="button"
+                              variant="ghost"
+                              size="icon"
+                              className="h-9 w-9 text-muted-foreground hover:text-destructive"
+                              aria-label="Archive vendor"
+                              onClick={() => setArchiveTargetId(v.id)}
+                            >
+                              <Trash2 className="h-4 w-4" />
+                            </Button>
+                          </TableCell>
+                        </TableRow>
+                      ))}
+                    </TableBody>
+                  </Table>
+                </div>
+              </div>
+            </>
           )}
         </CardContent>
       </Card>
@@ -323,6 +359,29 @@ export default function VendorsPage() {
               {saving ? 'Saving…' : 'Save vendor'}
             </Button>
           </form>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={archiveTargetId !== null} onOpenChange={(open) => !open && setArchiveTargetId(null)}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>Archive vendor</DialogTitle>
+            <DialogDescription>
+              Hides this vendor from the directory and picker. Past expenses linked to this vendor stay as-is.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
+            <Button type="button" variant="outline" onClick={() => setArchiveTargetId(null)}>
+              Cancel
+            </Button>
+            <Button
+              type="button"
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+              onClick={() => void confirmArchive()}
+            >
+              Archive
+            </Button>
+          </div>
         </DialogContent>
       </Dialog>
     </div>

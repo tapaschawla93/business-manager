@@ -155,7 +155,14 @@ export async function getDashboardKPIs(
   if (error) return { data: null, error: new Error(error.message) };
 
   const row = Array.isArray(data) ? data[0] : null;
-  if (!row || typeof row !== 'object') return { data: null, error: null };
+  if (!row || typeof row !== 'object') {
+    return {
+      data: null,
+      error: new Error(
+        'Invalid RPC response from `get_dashboard_kpis` (expected one row with KPI fields).',
+      ),
+    };
+  }
 
   const r = row as Record<string, unknown>;
   const total_revenue = asFiniteNumber(r.total_revenue);
@@ -176,7 +183,12 @@ export async function getDashboardKPIs(
     average_sale_value === null ||
     sales_count === null
   ) {
-    return { data: null, error: null };
+    return {
+      data: null,
+      error: new Error(
+        'Invalid or incomplete KPI row from `get_dashboard_kpis` (missing or non-numeric fields).',
+      ),
+    };
   }
 
   return {

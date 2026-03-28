@@ -35,11 +35,11 @@ export function KPICard({
 
   return (
     <Card className="overflow-hidden">
-      <CardContent className="relative p-5">
-        <div className="flex items-start justify-between gap-2">
+      <CardContent className="relative p-3.5 md:p-5">
+        <div className="flex items-start justify-between gap-1.5 md:gap-2">
           <div
             className={cn(
-              'flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-muted text-muted-foreground',
+              'flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-muted text-muted-foreground md:h-11 md:w-11 md:rounded-xl [&_svg]:h-4 [&_svg]:w-4 md:[&_svg]:h-5 md:[&_svg]:w-5',
               iconClassName,
             )}
           >
@@ -48,18 +48,28 @@ export function KPICard({
           {trendLabel ? (
             <Badge
               variant="outline"
-              className={cn('gap-0.5 rounded-full px-2 py-0.5 text-xs font-semibold shadow-none', pillClass)}
+              className={cn(
+                'gap-0.5 rounded-full px-1.5 py-0 text-[10px] font-semibold shadow-none md:px-2 md:py-0.5 md:text-xs',
+                pillClass,
+              )}
             >
-              {trendVariant === 'positive' ? <TrendingUp className="h-3 w-3" aria-hidden /> : null}
+              {trendVariant === 'positive' ? <TrendingUp className="h-2.5 w-2.5 md:h-3 md:w-3" aria-hidden /> : null}
               {trendLabel}
             </Badge>
           ) : null}
         </div>
-        <p className="mt-4 text-sm font-medium text-muted-foreground">{label}</p>
-        <p className={cn('mt-1 text-2xl font-bold tabular-nums tracking-tight text-foreground', valueClassName)}>
+        <p className="mt-2.5 text-xs font-medium text-muted-foreground md:mt-4 md:text-sm">{label}</p>
+        <p
+          className={cn(
+            'mt-0.5 text-lg font-bold tabular-nums tracking-tight text-foreground md:mt-1 md:text-2xl',
+            valueClassName,
+          )}
+        >
           {value}
         </p>
-        {hint ? <p className="mt-1 text-xs text-muted-foreground">{hint}</p> : null}
+        {hint ? (
+          <p className="mt-0.5 text-[11px] leading-snug text-muted-foreground md:mt-1 md:text-xs">{hint}</p>
+        ) : null}
       </CardContent>
     </Card>
   );

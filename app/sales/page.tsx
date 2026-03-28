@@ -26,8 +26,8 @@ import {
 import { devError } from '@/lib/devLog';
 import { PageHeader } from '@/components/PageHeader';
 import { Button } from '@/components/ui/button';
-import { Fab } from '@/components/Fab';
 import { SalesForm } from './components/SalesForm';
+import { SalesMobileList } from './components/SalesMobileList';
 import {
   Dialog,
   DialogContent,
@@ -303,7 +303,10 @@ export default function SalesPage() {
 
       <Card className="overflow-hidden border-border/80 shadow-md">
         <CardContent className="p-0">
-          <div className="overflow-x-auto">
+          <div className="p-4 md:hidden">
+            <SalesMobileList rows={rows} loading={loading} onNewSale={() => setDialogOpen(true)} />
+          </div>
+          <div className="hidden overflow-x-auto md:block">
             <Table>
               <TableHeader>
                 <TableRow className="border-border/60 bg-muted/50 hover:bg-muted/50">
@@ -383,8 +386,6 @@ export default function SalesPage() {
           </div>
         </CardContent>
       </Card>
-
-      <Fab aria-label="Quick actions" onClick={() => setDialogOpen(true)} />
 
       <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
         <DialogContent className="max-h-[min(92vh,800px)] gap-6 overflow-y-auto sm:max-w-lg">

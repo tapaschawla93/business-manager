@@ -22,22 +22,11 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog';
 import { PageHeader } from '@/components/PageHeader';
-import { Fab } from '@/components/Fab';
 import { Skeleton } from '@/components/ui/skeleton';
 import { SessionRedirectNotice } from '@/components/SessionRedirectNotice';
 import { useBusinessSession } from '@/lib/auth/useBusinessSession';
-type MarginTone = 'good' | 'warn' | 'bad' | 'na';
-
-/** UI margin from MRP & cost (catalog); not stored. */
-function getMargin(p: Product): { label: string; tone: MarginTone } {
-  const cost = Number(p.cost_price);
-  if (!Number.isFinite(cost) || cost <= 0) return { label: '—', tone: 'na' };
-  const mrp = Number(p.mrp);
-  if (!Number.isFinite(mrp)) return { label: '—', tone: 'na' };
-  const pct = ((mrp - cost) / cost) * 100;
-  const tone: MarginTone = pct > 30 ? 'good' : pct >= 10 ? 'warn' : 'bad';
-  return { label: `${pct.toFixed(1)}%`, tone };
-}
+import { ProductsMobileList } from '@/app/products/components/ProductsMobileList';
+import { getProductMargin, productMarginToneClass } from '@/lib/products/productMargin';
 
 /**
  * V1 Product Repository: CRUD for tenant-scoped products.
@@ -419,13 +408,24 @@ export default function ProductsPage() {
                   Add your first product
                 </Button>
               </div>
-            ) : filteredProducts.length === 0 ? (
-              <div className="flex min-h-[240px] flex-col items-center justify-center gap-2 text-center">
-                <p className="text-sm font-medium text-foreground">No matching products</p>
-                <p className="text-sm text-muted-foreground">Try a different search term.</p>
-              </div>
             ) : (
-              <div className="overflow-x-auto">
+              <>
+                <div className="md:hidden">
+                  <ProductsMobileList
+                    products={filteredProducts}
+                    onEdit={startEdit}
+                    onArchive={setArchiveTargetId}
+                    onAdd={openAdd}
+                  />
+                </div>
+                <div className="hidden md:block">
+                  {filteredProducts.length === 0 ? (
+                    <div className="flex min-h-[240px] flex-col items-center justify-center gap-2 text-center">
+                      <p className="text-sm font-medium text-foreground">No matching products</p>
+                      <p className="text-sm text-muted-foreground">Try a different search term.</p>
+                    </div>
+                  ) : (
+                    <div className="overflow-x-auto">
               <Table>
                 <TableHeader>
                   <TableRow className="border-border/60 bg-muted/50 hover:bg-muted/50">
@@ -440,15 +440,7 @@ export default function ProductsPage() {
                 </TableHeader>
                 <TableBody>
                   {filteredProducts.map((p) => {
-                    const m = getMargin(p);
-                    const marginClass =
-                      m.tone === 'good'
-                        ? 'text-finance-positive'
-                        : m.tone === 'warn'
-                          ? 'text-amber-600'
-                          : m.tone === 'bad'
-                            ? 'text-finance-negative'
-                            : 'text-muted-foreground';
+                    const m = getProductMargin(p);
 
                     return (
                       <TableRow key={p.id} className="hover:bg-muted/40">
@@ -465,7 +457,9 @@ export default function ProductsPage() {
                         <TableCell className="text-right tabular-nums">
                           {formatInrDisplay(Number(p.cost_price))}
                         </TableCell>
-                        <TableCell className={`text-right font-semibold tabular-nums ${marginClass}`}>
+                        <TableCell
+                          className={`text-right font-semibold tabular-nums ${productMarginToneClass(m.tone)}`}
+                        >
                           {m.label}
                         </TableCell>
                         <TableCell className="text-right">
@@ -497,12 +491,13 @@ export default function ProductsPage() {
                   })}
                 </TableBody>
               </Table>
-              </div>
+                    </div>
+                  )}
+                </div>
+              </>
             )}
           </CardContent>
       </Card>
-
-      <Fab aria-label="Add product" onClick={openAdd} />
 
       <Dialog open={dialogOpen} onOpenChange={handleDialogOpenChange}>
           <DialogContent className="max-h-[min(90vh,720px)] overflow-y-auto sm:max-w-lg">

@@ -1,6 +1,21 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import type { Sale } from '@/lib/types/sale';
 
+/** Per-line detail for mobile accordion (and any drill-down UI). */
+export type SaleListLineDetail = {
+  id: string;
+  product_id: string;
+  product_name: string;
+  variant: string | null;
+  category: string;
+  quantity: number;
+  sale_price: number;
+  cost_price_snapshot: number;
+  mrp_snapshot: number;
+  vs_mrp: number;
+  profit: number;
+};
+
 export type SaleListRow = {
   sale: Pick<
     Sale,
@@ -11,6 +26,8 @@ export type SaleListRow = {
     | 'customer_address'
     | 'sale_type'
     | 'total_amount'
+    | 'total_cost'
+    | 'total_profit'
     | 'payment_mode'
     | 'created_at'
   >;
@@ -20,6 +37,8 @@ export type SaleListRow = {
     totalQty: number;
     lineCount: number;
   };
+  /** Ordered line items with snapshots (mobile accordion expanded body). */
+  lines: SaleListLineDetail[];
 };
 
 export async function fetchSalesList(supabase: SupabaseClient): Promise<{
@@ -28,7 +47,9 @@ export async function fetchSalesList(supabase: SupabaseClient): Promise<{
 }> {
   const { data: sales, error: e1 } = await supabase
     .from('sales')
-    .select('id, date, customer_name, customer_phone, customer_address, sale_type, total_amount, payment_mode, created_at')
+    .select(
+      'id, date, customer_name, customer_phone, customer_address, sale_type, total_amount, total_cost, total_profit, payment_mode, created_at',
+    )
     .is('deleted_at', null)
     .order('created_at', { ascending: false });
 
@@ -38,7 +59,9 @@ export async function fetchSalesList(supabase: SupabaseClient): Promise<{
   const saleIds = sales.map((s) => s.id);
   const { data: items, error: e2 } = await supabase
     .from('sale_items')
-    .select('sale_id, quantity, product_id')
+    .select(
+      'id, sale_id, product_id, quantity, sale_price, cost_price_snapshot, mrp_snapshot, vs_mrp, profit',
+    )
     .in('sale_id', saleIds);
 
   if (e2) return { data: null, error: new Error(e2.message) };
@@ -46,7 +69,7 @@ export async function fetchSalesList(supabase: SupabaseClient): Promise<{
   const productIds = [...new Set((items ?? []).map((i) => i.product_id))];
   const { data: products } = await supabase
     .from('products')
-    .select('id, name, category')
+    .select('id, name, variant, category')
     .in('id', productIds);
 
   const productMap = new Map((products ?? []).map((p) => [p.id as string, p]));
@@ -59,24 +82,43 @@ export async function fetchSalesList(supabase: SupabaseClient): Promise<{
   }
 
   const rows: SaleListRow[] = sales.map((sale) => {
-    const lines = bySale.get(sale.id) ?? [];
-    const totalQty = lines.reduce((s, l) => s + Number(l.quantity), 0);
-    const first = lines[0];
-    const p = first ? productMap.get(first.product_id) : undefined;
+    const rawLines = bySale.get(sale.id) ?? [];
+    const totalQty = rawLines.reduce((s, l) => s + Number(l.quantity), 0);
+    const first = rawLines[0];
+    const p0 = first ? productMap.get(first.product_id) : undefined;
     const primaryProduct =
-      lines.length === 0
+      rawLines.length === 0
         ? '—'
-        : lines.length > 1
-          ? `${p?.name ?? 'Multiple'} (+${lines.length - 1})`
-          : (p?.name ?? '—');
+        : rawLines.length > 1
+          ? `${p0?.name ?? 'Multiple'} (+${rawLines.length - 1})`
+          : (p0?.name ?? '—');
+
+    const lines: SaleListLineDetail[] = rawLines.map((l) => {
+      const p = productMap.get(l.product_id);
+      return {
+        id: l.id as string,
+        product_id: l.product_id,
+        product_name: p?.name ?? '—',
+        variant: p?.variant ?? null,
+        category: p?.category ?? '—',
+        quantity: Number(l.quantity),
+        sale_price: Number(l.sale_price),
+        cost_price_snapshot: Number(l.cost_price_snapshot),
+        mrp_snapshot: Number(l.mrp_snapshot),
+        vs_mrp: Number(l.vs_mrp),
+        profit: Number(l.profit),
+      };
+    });
+
     return {
       sale,
       lineSummary: {
         primaryProduct,
-        primaryCategory: p?.category ?? '—',
+        primaryCategory: p0?.category ?? '—',
         totalQty,
-        lineCount: lines.length,
+        lineCount: rawLines.length,
       },
+      lines,
     };
   });
 

@@ -7,6 +7,7 @@ import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Card, CardContent } from '@/components/ui/card';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
+import { ExpenseMobileList } from '@/app/expenses/components/ExpenseMobileList';
 
 function formatDateShort(iso: string): string {
   try {
@@ -49,72 +50,79 @@ export function ExpenseList({
             <p className="text-sm text-muted-foreground">Add purchases with New expense or the + button.</p>
           </div>
         ) : (
-          <div className="overflow-x-auto">
-            <Table>
-              <TableHeader>
-                <TableRow className="border-border/60 bg-muted/50 hover:bg-muted/50">
-                  <TableHead className="ui-table-head py-4">Date</TableHead>
-                  <TableHead className="ui-table-head py-4">Vendor</TableHead>
-                  <TableHead className="ui-table-head py-4">Item</TableHead>
-                  <TableHead className="ui-table-head py-4 text-right">Units</TableHead>
-                  <TableHead className="ui-table-head py-4 text-right">Amount</TableHead>
-                  <TableHead className="ui-table-head py-4">Payment</TableHead>
-                  <TableHead className="ui-table-head py-4 text-right">Actions</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {expenses.map((row) => (
-                  <TableRow key={row.id} className="border-border/50">
-                    <TableCell className="whitespace-nowrap text-sm text-muted-foreground">
-                      {formatDateShort(row.date)}
-                    </TableCell>
-                    <TableCell className="font-medium text-foreground">{row.vendor_name}</TableCell>
-                    <TableCell className="max-w-[140px] truncate text-sm">{row.item_description}</TableCell>
-                    <TableCell className="text-right tabular-nums text-sm">{row.quantity}</TableCell>
-                    <TableCell className="text-right text-sm font-bold tabular-nums">
-                      {formatInrDisplay(Number(row.total_amount))}
-                    </TableCell>
-                    <TableCell>
-                      <Badge
-                        variant="outline"
-                        className={
-                          row.payment_mode === 'online'
-                            ? 'border-primary/25 bg-primary/5 font-semibold text-primary'
-                            : 'font-semibold'
-                        }
-                      >
-                        {row.payment_mode}
-                      </Badge>
-                    </TableCell>
-                    <TableCell className="text-right">
-                      <div className="flex justify-end gap-1">
-                        <Button
-                          type="button"
-                          variant="ghost"
-                          size="icon"
-                          className="h-9 w-9"
-                          aria-label="Edit"
-                          onClick={() => onEdit(row)}
-                        >
-                          <Pencil className="h-4 w-4" />
-                        </Button>
-                        <Button
-                          type="button"
-                          variant="ghost"
-                          size="icon"
-                          className="h-9 w-9 text-muted-foreground hover:text-destructive"
-                          aria-label="Archive"
-                          onClick={() => onArchive(row.id)}
-                        >
-                          <Trash2 className="h-4 w-4" />
-                        </Button>
-                      </div>
-                    </TableCell>
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
-          </div>
+          <>
+            <div className="md:hidden">
+              <ExpenseMobileList expenses={expenses} onEdit={onEdit} onArchive={onArchive} />
+            </div>
+            <div className="hidden md:block">
+              <div className="overflow-x-auto">
+                <Table>
+                  <TableHeader>
+                    <TableRow className="border-border/60 bg-muted/50 hover:bg-muted/50">
+                      <TableHead className="ui-table-head py-4">Date</TableHead>
+                      <TableHead className="ui-table-head py-4">Vendor</TableHead>
+                      <TableHead className="ui-table-head py-4">Item</TableHead>
+                      <TableHead className="ui-table-head py-4 text-right">Units</TableHead>
+                      <TableHead className="ui-table-head py-4 text-right">Amount</TableHead>
+                      <TableHead className="ui-table-head py-4">Payment</TableHead>
+                      <TableHead className="ui-table-head py-4 text-right">Actions</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {expenses.map((row) => (
+                      <TableRow key={row.id} className="border-border/50">
+                        <TableCell className="whitespace-nowrap text-sm text-muted-foreground">
+                          {formatDateShort(row.date)}
+                        </TableCell>
+                        <TableCell className="font-medium text-foreground">{row.vendor_name}</TableCell>
+                        <TableCell className="max-w-[140px] truncate text-sm">{row.item_description}</TableCell>
+                        <TableCell className="text-right tabular-nums text-sm">{row.quantity}</TableCell>
+                        <TableCell className="text-right text-sm font-bold tabular-nums">
+                          {formatInrDisplay(Number(row.total_amount))}
+                        </TableCell>
+                        <TableCell>
+                          <Badge
+                            variant="outline"
+                            className={
+                              row.payment_mode === 'online'
+                                ? 'border-primary/25 bg-primary/5 font-semibold text-primary'
+                                : 'font-semibold'
+                            }
+                          >
+                            {row.payment_mode}
+                          </Badge>
+                        </TableCell>
+                        <TableCell className="text-right">
+                          <div className="flex justify-end gap-1">
+                            <Button
+                              type="button"
+                              variant="ghost"
+                              size="icon"
+                              className="h-9 w-9"
+                              aria-label="Edit"
+                              onClick={() => onEdit(row)}
+                            >
+                              <Pencil className="h-4 w-4" />
+                            </Button>
+                            <Button
+                              type="button"
+                              variant="ghost"
+                              size="icon"
+                              className="h-9 w-9 text-muted-foreground hover:text-destructive"
+                              aria-label="Archive"
+                              onClick={() => onArchive(row.id)}
+                            >
+                              <Trash2 className="h-4 w-4" />
+                            </Button>
+                          </div>
+                        </TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              </div>
+            </div>
+          </>
         )}
       </CardContent>
     </Card>

@@ -2,9 +2,10 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
-import { useRouter } from 'next/navigation';
 import { getSupabaseClient } from '@/lib/supabaseClient';
 import { withTimeout } from '@/lib/withTimeout';
+import { useBusinessSession } from '@/lib/auth/useBusinessSession';
+import { SessionRedirectNotice } from '@/components/SessionRedirectNotice';
 import {
   defaultDashboardYtdRange,
   getDashboardKPIs,
@@ -35,21 +36,21 @@ import { toast } from 'sonner';
 
 function DashboardSkeleton({ phase }: { phase: 'session' | 'data' }) {
   return (
-    <div className="space-y-8">
-      <p className="text-sm text-muted-foreground">
+    <div className="space-y-5 md:space-y-8">
+      <p className="text-xs text-muted-foreground md:text-sm">
         {phase === 'session' ? 'Checking your session…' : 'Loading dashboard…'}
       </p>
-      <div className="space-y-3">
-        <Skeleton className="h-9 w-64 rounded-lg" />
-        <Skeleton className="h-4 w-full max-w-xl rounded-md" />
-        <div className="flex flex-wrap gap-2 pt-2">
-          <Skeleton className="h-10 w-40 rounded-xl" />
-          <Skeleton className="h-10 w-44 rounded-xl" />
+      <div className="space-y-2 md:space-y-3">
+        <Skeleton className="h-8 w-56 rounded-lg md:h-9 md:w-64" />
+        <Skeleton className="h-3.5 w-full max-w-xl rounded-md md:h-4" />
+        <div className="flex flex-wrap gap-2 pt-1 md:pt-2">
+          <Skeleton className="h-9 w-36 rounded-xl md:h-10 md:w-40" />
+          <Skeleton className="h-9 w-40 rounded-xl md:h-10 md:w-44" />
         </div>
       </div>
-      <div className="grid grid-cols-2 gap-4 md:grid-cols-3">
+      <div className="grid grid-cols-2 gap-3 md:gap-4 md:grid-cols-3">
         {Array.from({ length: 6 }).map((_, i) => (
-          <Skeleton key={i} className="h-[140px] rounded-card" />
+          <Skeleton key={i} className="h-[118px] rounded-card md:h-[140px]" />
         ))}
       </div>
     </div>
@@ -76,9 +77,9 @@ function compareYmd(a: string, b: string): number {
 }
 
 export default function HomePage() {
-  const router = useRouter();
-  const [checkingSession, setCheckingSession] = useState(true);
-  const [isAuthenticated, setIsAuthenticated] = useState(false);
+  const session = useBusinessSession({ onMissingBusiness: 'error' });
+  const sessionReady = session.kind === 'ready';
+
   const [loadingDashboard, setLoadingDashboard] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -88,88 +89,51 @@ export default function HomePage() {
 
   const [kpis, setKpis] = useState<DashboardKPIs | null>(null);
   const [topProducts, setTopProducts] = useState<TopProductsPayload | null>(null);
-  const [sessionError, setSessionError] = useState<string | null>(null);
+
+  const loadDashboardGenRef = useRef(0);
 
   useEffect(() => {
-    let cancelled = false;
-
-    async function checkSession() {
-      try {
-        const supabase = getSupabaseClient();
-        const { data, error: authErr } = await withTimeout(
-          supabase.auth.getUser(),
-          25_000,
-          'Sign-in check timed out. Check your network, then refresh.',
-        );
-        if (cancelled) return;
-        if (authErr) {
-          setSessionError(authErr.message);
-          setCheckingSession(false);
-          setIsAuthenticated(false);
-          return;
-        }
-        const hasSession = Boolean(data.user);
-        setIsAuthenticated(hasSession);
-        setCheckingSession(false);
-
-        if (!hasSession) {
-          router.replace('/login');
-        }
-      } catch (e: unknown) {
-        if (cancelled) return;
-        const msg = e instanceof Error ? e.message : 'Could not initialize app';
-        setSessionError(msg);
-        setCheckingSession(false);
-        setIsAuthenticated(false);
-      }
-    }
-
-    void checkSession();
-    return () => {
-      cancelled = true;
-    };
-  }, [router]);
-
-  useEffect(() => {
-    if (!isAuthenticated) return;
+    if (!sessionReady) return;
     const ytd = defaultDashboardYtdRange();
     setDateFrom(ytd.from);
     setDateTo(ytd.to);
     setAppliedRange(ytd);
-  }, [isAuthenticated]);
+  }, [sessionReady]);
 
-  const loadDashboard = useCallback(
-    async (range: DashboardDateRange) => {
-      const supabase = getSupabaseClient();
-      setLoadingDashboard(true);
-      setError(null);
+  const loadDashboard = useCallback(async (range: DashboardDateRange) => {
+    const gen = ++loadDashboardGenRef.current;
+    const supabase = getSupabaseClient();
+    setLoadingDashboard(true);
+    setError(null);
 
-      try {
-        const [kpiRes, topRes] = await withTimeout(
-          Promise.all([getDashboardKPIs(supabase, range), getTopProducts(supabase, range)]),
-          25_000,
-          'Dashboard request timed out. If you just updated SQL, apply migration 20260330140000_dashboard_v2_date_range.sql on Supabase, then refresh.',
-        );
-        if (kpiRes.error) throw kpiRes.error;
-        if (topRes.error) throw topRes.error;
+    try {
+      const [kpiRes, topRes] = await withTimeout(
+        Promise.all([getDashboardKPIs(supabase, range), getTopProducts(supabase, range)]),
+        25_000,
+        'Dashboard request timed out. If you just updated SQL, apply migration 20260330140000_dashboard_v2_date_range.sql on Supabase, then refresh.',
+      );
+      if (gen !== loadDashboardGenRef.current) return;
+      if (kpiRes.error) throw kpiRes.error;
+      if (topRes.error) throw topRes.error;
 
-        setKpis(kpiRes.data);
-        setTopProducts(topRes.data);
-      } catch (e: unknown) {
-        const msg = e instanceof Error ? e.message : 'Failed to load dashboard';
-        setError(msg);
-        toast.error(msg);
-      } finally {
+      setKpis(kpiRes.data);
+      setTopProducts(topRes.data);
+    } catch (e: unknown) {
+      if (gen !== loadDashboardGenRef.current) return;
+      const msg = e instanceof Error ? e.message : 'Failed to load dashboard';
+      setError(msg);
+      toast.error(msg);
+    } finally {
+      if (gen === loadDashboardGenRef.current) {
         setLoadingDashboard(false);
       }
-    },
-    [],
-  );
+    }
+  }, []);
 
   useEffect(() => {
-    if (!isAuthenticated || !appliedRange) return;
+    if (!sessionReady || !appliedRange) return;
     void loadDashboard(appliedRange);
-  }, [isAuthenticated, appliedRange, loadDashboard]);
+  }, [sessionReady, appliedRange, loadDashboard]);
 
   const applyDateRange = useCallback(() => {
     if (!parseYmd(dateFrom) || !parseYmd(dateTo)) {
@@ -190,28 +154,25 @@ export default function HomePage() {
     setAppliedRange(ytd);
   }, []);
 
-  if (checkingSession) {
+  if (session.kind === 'loading') {
     return <DashboardSkeleton phase="session" />;
   }
 
-  if (sessionError) {
+  if (session.kind === 'redirect_login') {
+    return <SessionRedirectNotice to="login" />;
+  }
+
+  if (session.kind === 'redirect_home') {
+    return <SessionRedirectNotice to="home" />;
+  }
+
+  if (session.kind === 'error') {
     return (
       <div className="space-y-4 rounded-card border border-destructive/40 bg-card p-6 shadow-sm">
         <p className="text-sm font-semibold text-destructive">Something went wrong</p>
-        <p className="text-sm text-muted-foreground">{sessionError}</p>
+        <p className="text-sm text-muted-foreground">{session.message}</p>
         <Button type="button" variant="outline" className="rounded-xl" asChild>
           <Link href="/login">Go to sign in</Link>
-        </Button>
-      </div>
-    );
-  }
-
-  if (!isAuthenticated) {
-    return (
-      <div className="flex min-h-[50vh] flex-col items-center justify-center gap-3 text-center">
-        <p className="text-sm text-muted-foreground">Redirecting to sign in…</p>
-        <Button type="button" variant="link" className="text-primary" asChild>
-          <Link href="/login">Open login</Link>
         </Button>
       </div>
     );
@@ -232,8 +193,13 @@ export default function HomePage() {
       : null;
 
   return (
-    <div className="space-y-8">
+    <div
+      className={
+        'space-y-5 md:space-y-8 max-md:[&_h1.ui-page-title]:!text-xl max-md:[&_h1.ui-page-title]:!leading-tight max-md:[&_h1.ui-page-title]:sm:!text-xl max-md:[&_p.ui-page-description]:!text-xs max-md:[&_p.ui-page-description]:!leading-snug'
+      }
+    >
       <PageHeader
+        className="max-md:gap-2"
         title="Dashboard Overview"
         description="Operating summary for the selected period: revenue, spend, stock at cost, collections split, and product/category breakdowns."
         actions={
@@ -241,19 +207,19 @@ export default function HomePage() {
             <Button
               type="button"
               variant="outline"
-              className="h-11 gap-2 rounded-xl border-border/80 font-semibold shadow-sm"
+              className="h-10 gap-2 rounded-xl border-border/80 text-sm font-semibold shadow-sm md:h-11 md:text-base"
               onClick={() => toast.message('Backup Database — connect storage in a future release.')}
             >
-              <Download className="h-4 w-4" aria-hidden />
+              <Download className="h-3.5 w-3.5 md:h-4 md:w-4" aria-hidden />
               Backup Database
             </Button>
           </>
         }
       />
 
-      <div className="flex flex-col gap-4 rounded-card border border-border/70 bg-card/40 p-4 shadow-sm sm:flex-row sm:flex-wrap sm:items-end">
-        <div className="grid gap-2 sm:min-w-[160px]">
-          <Label htmlFor="dash-from" className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+      <div className="flex flex-col gap-3 rounded-card border border-border/70 bg-card/40 p-3 shadow-sm sm:flex-row sm:flex-wrap sm:items-end md:gap-4 md:p-4">
+        <div className="grid gap-1.5 sm:min-w-[160px] md:gap-2">
+          <Label htmlFor="dash-from" className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground md:text-xs">
             From
           </Label>
           <Input
@@ -261,11 +227,11 @@ export default function HomePage() {
             type="date"
             value={dateFrom}
             onChange={(e) => setDateFrom(e.target.value)}
-            className="h-11 rounded-xl font-medium"
+            className="h-10 rounded-xl text-sm font-medium md:h-11 md:text-base"
           />
         </div>
-        <div className="grid gap-2 sm:min-w-[160px]">
-          <Label htmlFor="dash-to" className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+        <div className="grid gap-1.5 sm:min-w-[160px] md:gap-2">
+          <Label htmlFor="dash-to" className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground md:text-xs">
             To
           </Label>
           <Input
@@ -273,13 +239,13 @@ export default function HomePage() {
             type="date"
             value={dateTo}
             onChange={(e) => setDateTo(e.target.value)}
-            className="h-11 rounded-xl font-medium"
+            className="h-10 rounded-xl text-sm font-medium md:h-11 md:text-base"
           />
         </div>
         <div className="flex flex-wrap gap-2">
           <Button
             type="button"
-            className="h-11 rounded-xl font-semibold"
+            className="h-10 rounded-xl text-sm font-semibold md:h-11 md:text-base"
             onClick={() => applyDateRange()}
             disabled={loadingDashboard}
           >
@@ -288,7 +254,7 @@ export default function HomePage() {
           <Button
             type="button"
             variant="secondary"
-            className="h-11 rounded-xl font-semibold"
+            className="h-10 rounded-xl text-sm font-semibold md:h-11 md:text-base"
             onClick={() => resetYtd()}
             disabled={loadingDashboard}
           >
@@ -296,7 +262,7 @@ export default function HomePage() {
           </Button>
         </div>
         {rangeLabel ? (
-          <p className="w-full text-sm text-muted-foreground sm:ml-auto sm:w-auto sm:text-right">
+          <p className="w-full text-xs text-muted-foreground sm:ml-auto sm:w-auto sm:text-right md:text-sm">
             Showing: <span className="font-medium text-foreground">{rangeLabel}</span>
           </p>
         ) : null}
@@ -305,14 +271,14 @@ export default function HomePage() {
       {error ? <p className="text-sm text-destructive">{error}</p> : null}
 
       {loadingDashboard && kpis ? (
-        <p className="text-sm text-muted-foreground">Refreshing figures…</p>
+        <p className="text-xs text-muted-foreground md:text-sm">Refreshing figures…</p>
       ) : null}
 
       {kpis ? (
         <>
-          <section className="grid grid-cols-2 gap-4 md:grid-cols-3">
+          <section className="grid grid-cols-2 gap-3 md:gap-4 md:grid-cols-3">
             <KPICard
-              icon={<Warehouse className="h-5 w-5" aria-hidden />}
+              icon={<Warehouse className="h-5 w-5 shrink-0" aria-hidden />}
               label="Inventory Value"
               value={formatInrDisplay(kpis.inventory_value)}
               hint="Stock at catalogue cost (current)"
@@ -370,7 +336,7 @@ export default function HomePage() {
             />
           </section>
 
-          <section className="grid gap-4 lg:grid-cols-2">
+          <section className="grid gap-3 lg:grid-cols-2 md:gap-4">
             <PaymentCollectionsCard
               cashCollected={kpis.cash_collected}
               onlineCollected={kpis.online_collected}
