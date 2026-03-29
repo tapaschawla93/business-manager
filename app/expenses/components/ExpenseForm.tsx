@@ -92,6 +92,12 @@ export function ExpenseForm({
   const [isStockPurchase, setIsStockPurchase] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  /** New expense row saved, but ledger RPC failed — avoid duplicate insert; use Retry or Dismiss. */
+  const [pendingStockLedgerSync, setPendingStockLedgerSync] = useState<{
+    productId: string;
+    delta: number;
+    unitCost: number;
+  } | null>(null);
 
   const loadVendors = useCallback(async () => {
     const supabase = getSupabaseClient();
@@ -124,6 +130,7 @@ export function ExpenseForm({
   }, [loadVendors, loadProducts]);
 
   useEffect(() => {
+    setPendingStockLedgerSync(null);
     if (editing) {
       const stockMode = Boolean(editing.product_id && editing.update_inventory !== false);
       setIsStockPurchase(stockMode);
@@ -200,7 +207,7 @@ export function ExpenseForm({
     }
   }
 
-  /** Ledger is updated by DB trigger; this RPC mirrors `inventory.quantity_on_hand` into `inventory_items` (idempotent). */
+  /** Mirrors `inventory.quantity_on_hand` into `inventory_items` after the ledger has been updated (idempotent). */
   async function reconcileInventoryLineForProduct(pId: string) {
     const supabase = getSupabaseClient();
     const { error: rpcErr } = await supabase.rpc('reconcile_inventory_line_for_product', {
@@ -209,6 +216,49 @@ export function ExpenseForm({
     if (rpcErr) {
       toast.error(rpcErr.message || 'Could not sync inventory line from ledger');
     }
+  }
+
+  function resetFormAfterNewStockExpenseSaved() {
+    setVendorName('');
+    setVendorDirectoryId(null);
+    setPickerLabel(undefined);
+    setQuantity('1');
+    setUnitCost('');
+    setPaymentMode('cash');
+    setNotes('');
+    setDateLocal(nowDatetimeLocal());
+    setProductId(null);
+    setProductPickerLabel(undefined);
+    setIsStockPurchase(false);
+    setPendingStockLedgerSync(null);
+    setError(null);
+  }
+
+  async function retryStockLedgerSync() {
+    if (!pendingStockLedgerSync || !businessId) return;
+    setSaving(true);
+    setError(null);
+    const supabase = getSupabaseClient();
+    const { productId, delta, unitCost } = pendingStockLedgerSync;
+    const { error: dErr } = await supabase.rpc('inventory_apply_delta_for_tenant', {
+      p_business_id: businessId,
+      p_product_id: productId,
+      p_delta: delta,
+    });
+    setSaving(false);
+    if (dErr) {
+      const msg =
+        dErr.message ||
+        'Stock could not be updated. Check Supabase migrations, then try again or edit this expense from the list.';
+      setError(msg);
+      toast.error(msg);
+      return;
+    }
+    await syncCostFromStockExpense(productId, unitCost);
+    await reconcileInventoryLineForProduct(productId);
+    toast.success('Stock updated — expense was already saved.');
+    resetFormAfterNewStockExpenseSaved();
+    await onSaved();
   }
 
   async function handleSubmit(e: FormEvent) {
@@ -289,26 +339,18 @@ export function ExpenseForm({
           p_delta: q,
         });
         if (dErr) {
-          toast.error(
+          const msg =
             dErr.message ||
-              'Expense was saved but stock could not be updated. Run the latest Supabase migrations, then try editing this expense quantity to re-sync.',
-          );
+            'Expense was saved, but stock was not updated. Use Retry stock update (same expense — no duplicate) or Dismiss.';
+          setError(msg);
+          toast.error(msg);
+          setPendingStockLedgerSync({ productId, delta: q, unitCost: u });
         } else {
           await syncCostFromStockExpense(productId, u);
           await reconcileInventoryLineForProduct(productId);
           toast.success('Expense added — stock updated');
+          resetFormAfterNewStockExpenseSaved();
         }
-        setVendorName('');
-        setVendorDirectoryId(null);
-        setPickerLabel(undefined);
-        setQuantity('1');
-        setUnitCost('');
-        setPaymentMode('cash');
-        setNotes('');
-        setDateLocal(nowDatetimeLocal());
-        setProductId(null);
-        setProductPickerLabel(undefined);
-        setIsStockPurchase(false);
       }
 
       await onSaved();
@@ -405,6 +447,7 @@ export function ExpenseForm({
                   onCheckedChange={(v) => {
                     setIsStockPurchase(v);
                     setError(null);
+                    setPendingStockLedgerSync(null);
                     if (v) {
                       setItemDescription('');
                       setNonInventoryAmount('');
@@ -565,6 +608,34 @@ export function ExpenseForm({
             </div>
           </CardContent>
         </Card>
+        {pendingStockLedgerSync && !editing ? (
+          <div className="space-y-3 rounded-xl border border-amber-200/90 bg-amber-50/90 p-4 text-sm dark:border-amber-900/60 dark:bg-amber-950/35">
+            <p className="font-medium text-foreground">Expense saved — stock update failed</p>
+            <p className="text-muted-foreground">
+              Retry applies the same quantity to inventory without creating another expense. Dismiss clears this form if
+              you will fix stock from the list instead.
+            </p>
+            <div className="flex flex-col gap-2 sm:flex-row">
+              <Button
+                type="button"
+                className="h-11 rounded-xl font-semibold"
+                disabled={saving}
+                onClick={() => void retryStockLedgerSync()}
+              >
+                {saving ? 'Working…' : 'Retry stock update'}
+              </Button>
+              <Button
+                type="button"
+                variant="outline"
+                className="h-11 rounded-xl"
+                disabled={saving}
+                onClick={() => resetFormAfterNewStockExpenseSaved()}
+              >
+                Dismiss
+              </Button>
+            </div>
+          </div>
+        ) : null}
         {error && <p className="text-sm text-destructive">{error}</p>}
         <div className="flex flex-col gap-2">
           {editing && (
@@ -572,7 +643,12 @@ export function ExpenseForm({
               Cancel
             </Button>
           )}
-          <Button type="submit" size="full" disabled={saving} className="h-12 rounded-xl text-base font-semibold">
+          <Button
+            type="submit"
+            size="full"
+            disabled={saving || (!!pendingStockLedgerSync && !editing)}
+            className="h-12 rounded-xl text-base font-semibold"
+          >
             {saving ? 'Saving…' : editing ? 'Save changes' : 'Save expense'}
           </Button>
         </div>

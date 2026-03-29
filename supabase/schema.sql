@@ -640,6 +640,9 @@ security definer
 set search_path = public
 as $$
 begin
+  if p_business_id is distinct from public.current_business_id() then
+    raise exception 'Business mismatch';
+  end if;
   update public.products
     set cost_price = p_unit_cost, updated_at = now()
     where id = p_product_id and business_id = p_business_id;
