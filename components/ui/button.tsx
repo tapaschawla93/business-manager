@@ -20,8 +20,8 @@ const buttonVariants = cva(
         sm: 'h-9 rounded-lg px-3 text-xs',
         lg: 'h-11 rounded-lg px-8',
         icon: 'h-10 w-10 rounded-lg',
-        /** Full-width primary row (forms) */
-        full: 'h-12 w-full rounded-lg px-4 text-base font-semibold',
+        /** Full-width primary row (forms); compact on small screens, full size from `md`. */
+        full: 'h-10 w-full rounded-lg px-4 text-sm font-semibold md:h-12 md:text-base',
       },
     },
     defaultVariants: {

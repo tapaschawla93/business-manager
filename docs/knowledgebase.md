@@ -395,3 +395,28 @@
 - **Performance**: One extra **`toast.error`** per failed request is negligible; avoid **awaiting** loaders in a tight loop without batching.
 - **Alternatives**: **Inline `Alert`** or form-level **`error` state** instead of toast—good when the failure is **scoped to one form**; **global** shell fetches often still use toast because there’s no single field to attach to.
 - **Senior lens**: Treat **“empty picker after load”** as a **product smell** unless you’ve explicitly distinguished **empty catalog** (zero rows, no error) from **failed load**—always branch on **`error`** first, then render empty state.
+
+---
+
+## Sales RPCs — PostgREST schema cache, `archive_sale` / `update_sale`, client fallback
+
+### Level 1 — Core concept
+
+- **What**: **PostgREST** (Supabase’s REST layer) exposes Postgres **functions** as `/rpc/...` only after they exist in the DB **and** appear in PostgREST’s **schema cache**. New migrations that `CREATE OR REPLACE` **`archive_sale`** / **`update_sale`** do nothing for the browser until that project has **applied** the migration and the API has **reloaded** its schema (often automatic; sometimes you nudge it).
+- **Why errors look weird**: “**Could not find the function … in the schema cache**” means the **API** doesn’t know that signature yet—not necessarily that your repo is wrong. **`PGRST202`** is the usual code.
+- **`archive_sale` vs `update_sale`**: **`archive_sale`** soft-deletes the **`sales`** header and **restores stock** per **`sale_items`** line (positive **`inventory_apply_delta`**). **`update_sale`** **replaces** header + lines in one transaction (restore old quantities, delete lines, re-insert, apply new deltas)—same trust model as **`save_sale`**.
+- **Client fallback** (**`lib/archiveSale.ts`**): If **`archive_sale`** fails with a **missing-RPC** pattern, the app can **approximate** archive by calling **`inventory_apply_delta_for_tenant`** per line then **`UPDATE sales SET deleted_at`**. **Editing** a sale still **requires** **`update_sale`** on the server—**`sale_items`** has **no** client INSERT/DELETE policies by design (**`20250326120000_foundation_soft_delete_sales_rpc.sql`**).
+
+### Level 2 — Mechanics, pitfalls, debugging
+
+- **Migration anchor**: **`20260401160000_sale_archive_update_inventory_delete_rpc.sql`** defines **`archive_sale`**, **`update_sale`**, and related inventory RPCs; ship with **`supabase db push`** or run the file in the **SQL editor** for the **same** project as **`NEXT_PUBLIC_SUPABASE_URL`**.
+- **Schema reload**: **`20260401180000_postgrest_reload_schema.sql`** runs **`pg_notify('pgrst', 'reload schema')`** to refresh PostgREST; if your migration role can’t notify, use Supabase docs / dashboard equivalents. After deploy, **hard-refresh** the app.
+- **Hints** (**`lib/saleRpcUserHint.ts`**): **`isPostgrestMissingRpcError`** detects cache/catalog “missing function” messages; **`saleRpcUserHint`** appends the migration filename. Used for **`update_sale`** errors in **`SalesForm`**; archive uses fallback when the detector fires.
+- **RLS + PATCH RETURNING**: Do **not** chain **`.select()`** on a client **`update({ deleted_at })`** for **`sales`**—returned rows must pass **SELECT** RLS (**`sales_select_active`** requires **`deleted_at IS NULL`**), which produces **“new row violates row-level security”**-style failures. **Fix:** update **without** `.select()`, then verify with a **separate** read (see **Soft delete, RLS … RETURNING + SELECT RLS** above). **`lib/archiveSale.ts`** follows this pattern.
+- **Tenant safety on fallback**: **`inventory_apply_delta_for_tenant`** checks **`p_business_id`** against **`current_business_id()`** (**`Business mismatch`** if spoofed)—passing **`session.businessId`** from the client is **not** a cross-tenant escape hatch when the function is deployed.
+- **Failure mode (fallback)**: Client path is **not one DB transaction**—partial progress (some deltas applied, **`deleted_at`** not set) can **over-restore** ledger vs sale state. Treat fallback as **degraded**; production should rely on **`archive_sale`**.
+
+### Level 3 — Production notes
+
+- **Detector breadth**: **`isPostgrestMissingRpcError`** matches generic substrings (**e.g. `does not exist`**); rare false positives could enter the fallback—tighten if you see odd behavior.
+- **Senior lens**: Prefer **one SECURITY DEFINER RPC** per multi-step mutation (**atomic**, consistent with **`save_sale`**). Client fallbacks are **product continuity**, not the architectural end state; **`update_sale`** cannot be replicated from the browser without widening **`sale_items`** RLS (usually a bad trade).

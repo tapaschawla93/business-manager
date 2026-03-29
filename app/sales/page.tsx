@@ -1,7 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useState } from 'react';
-import { Download, Plus, Upload } from 'lucide-react';
+import { Download, Pencil, Plus, Trash2, Upload } from 'lucide-react';
 import { toast } from 'sonner';
 import { getSupabaseClient } from '@/lib/supabaseClient';
 import { fetchSalesList } from '@/lib/queries/salesList';
@@ -35,12 +35,23 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog';
 import { Card, CardContent } from '@/components/ui/card';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Badge } from '@/components/ui/badge';
 import { Skeleton } from '@/components/ui/skeleton';
 import { SessionRedirectNotice } from '@/components/SessionRedirectNotice';
 import { useBusinessSession } from '@/lib/auth/useBusinessSession';
+import { archiveSaleWithClientFallback } from '@/lib/archiveSale';
 
 function formatDateShort(iso: string): string {
   try {
@@ -64,6 +75,8 @@ export default function SalesPage() {
   const [rows, setRows] = useState<SaleListRow[] | null>(null);
   const [loading, setLoading] = useState(true);
   const [dialogOpen, setDialogOpen] = useState(false);
+  const [editingSale, setEditingSale] = useState<SaleListRow | null>(null);
+  const [archiveSaleId, setArchiveSaleId] = useState<string | null>(null);
   const [importing, setImporting] = useState(false);
 
   const load = useCallback(async () => {
@@ -83,6 +96,28 @@ export default function SalesPage() {
     if (!ready) return;
     void load();
   }, [ready, load]);
+
+  function openNewSaleDialog() {
+    setEditingSale(null);
+    setDialogOpen(true);
+  }
+
+  async function confirmArchiveSale() {
+    const id = archiveSaleId;
+    if (!id || session.kind !== 'ready') return;
+    setArchiveSaleId(null);
+    const supabase = getSupabaseClient();
+    const { error } = await archiveSaleWithClientFallback(supabase, {
+      saleId: id,
+      businessId: session.businessId,
+    });
+    if (error) {
+      toast.error(error);
+      return;
+    }
+    toast.success('Sale removed');
+    void load();
+  }
 
   function downloadSalesTemplate() {
     const headers = [
@@ -268,14 +303,19 @@ export default function SalesPage() {
         description="Track all your customer orders and revenue."
         actions={
           <>
-            <Button type="button" variant="outline" className="h-11 gap-2 rounded-xl" onClick={downloadSalesTemplate}>
+            <Button
+              type="button"
+              variant="outline"
+              className="h-10 gap-2 rounded-xl text-sm md:h-11 md:text-base"
+              onClick={downloadSalesTemplate}
+            >
               <Download className="h-4 w-4" aria-hidden />
               Template
             </Button>
             <Button
               type="button"
               variant="outline"
-              className="h-11 gap-2 rounded-xl"
+              className="h-10 gap-2 rounded-xl text-sm md:h-11 md:text-base"
               onClick={() => document.getElementById('sales-upload-input')?.click()}
               disabled={importing}
             >
@@ -293,7 +333,11 @@ export default function SalesPage() {
                 e.currentTarget.value = '';
               }}
             />
-            <Button type="button" className="h-11 gap-2 rounded-xl font-semibold shadow-sm" onClick={() => setDialogOpen(true)}>
+            <Button
+              type="button"
+              className="h-10 gap-2 rounded-xl text-sm font-semibold shadow-sm md:h-11 md:text-base"
+              onClick={openNewSaleDialog}
+            >
               <Plus className="h-4 w-4" aria-hidden />
               New Sale
             </Button>
@@ -303,8 +347,17 @@ export default function SalesPage() {
 
       <Card className="overflow-hidden border-border/80 shadow-md">
         <CardContent className="p-0">
-          <div className="p-4 md:hidden">
-            <SalesMobileList rows={rows} loading={loading} onNewSale={() => setDialogOpen(true)} />
+          <div className="px-0.5 py-3 md:hidden">
+            <SalesMobileList
+              rows={rows}
+              loading={loading}
+              onNewSale={openNewSaleDialog}
+              onEditSale={(row) => {
+                setEditingSale(row);
+                setDialogOpen(true);
+              }}
+              onArchiveSale={(id) => setArchiveSaleId(id)}
+            />
           </div>
           <div className="hidden overflow-x-auto md:block">
             <Table>
@@ -321,22 +374,23 @@ export default function SalesPage() {
                   <TableHead className="ui-table-head py-4">Sale type</TableHead>
                   <TableHead className="ui-table-head py-4 text-right">Amount</TableHead>
                   <TableHead className="ui-table-head py-4">Mode of payment</TableHead>
+                  <TableHead className="ui-table-head w-[100px] py-4 text-right">Actions</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
                 {loading ? (
                   <TableRow>
-                    <TableCell colSpan={11} className="py-12 text-center text-muted-foreground">
+                    <TableCell colSpan={12} className="py-12 text-center text-muted-foreground">
                       Loading sales…
                     </TableCell>
                   </TableRow>
                 ) : !rows?.length ? (
                   <TableRow>
-                    <TableCell colSpan={11} className="py-16">
+                    <TableCell colSpan={12} className="py-16">
                       <div className="flex flex-col items-center justify-center gap-2 text-center">
                         <p className="text-sm font-semibold text-foreground">No sales yet</p>
                         <p className="text-sm text-muted-foreground">Record your first sale with New Sale.</p>
-                        <Button type="button" className="mt-2 rounded-xl font-semibold" onClick={() => setDialogOpen(true)}>
+                        <Button type="button" className="mt-2 rounded-xl font-semibold" onClick={openNewSaleDialog}>
                           <Plus className="mr-2 h-4 w-4" aria-hidden />
                           New Sale
                         </Button>
@@ -378,6 +432,33 @@ export default function SalesPage() {
                           {r.sale.payment_mode === 'online' ? 'Online' : 'Cash'}
                         </Badge>
                       </TableCell>
+                      <TableCell className="text-right">
+                        <div className="flex justify-end gap-1">
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="icon"
+                            className="h-9 w-9"
+                            aria-label="Edit sale"
+                            onClick={() => {
+                              setEditingSale(r);
+                              setDialogOpen(true);
+                            }}
+                          >
+                            <Pencil className="h-4 w-4" />
+                          </Button>
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="icon"
+                            className="h-9 w-9 text-muted-foreground hover:text-destructive"
+                            aria-label="Delete sale"
+                            onClick={() => setArchiveSaleId(r.sale.id)}
+                          >
+                            <Trash2 className="h-4 w-4" />
+                          </Button>
+                        </div>
+                      </TableCell>
                     </TableRow>
                   ))
                 )}
@@ -387,21 +468,59 @@ export default function SalesPage() {
         </CardContent>
       </Card>
 
-      <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
+      <Dialog
+        open={dialogOpen}
+        onOpenChange={(open) => {
+          setDialogOpen(open);
+          if (!open) setEditingSale(null);
+        }}
+      >
         <DialogContent className="max-h-[min(92vh,800px)] gap-6 overflow-y-auto sm:max-w-lg">
           <DialogHeader>
-            <DialogTitle>Add New Sale</DialogTitle>
-            <DialogDescription>Enter customer, lines, and payment. Totals are confirmed on save.</DialogDescription>
+            <DialogTitle>{editingSale ? 'Edit sale' : 'Add New Sale'}</DialogTitle>
+            <DialogDescription>
+              {editingSale
+                ? 'Update lines, customer, or payment. Stock and totals are recalculated on save.'
+                : 'Enter customer, lines, and payment. Totals are confirmed on save.'}
+            </DialogDescription>
           </DialogHeader>
           <SalesForm
+            key={editingSale?.sale.id ?? 'new'}
             compact
+            editSale={editingSale}
+            onDiscardEdit={() => {
+              setDialogOpen(false);
+              setEditingSale(null);
+            }}
             onSaved={() => {
               setDialogOpen(false);
+              setEditingSale(null);
               void load();
             }}
           />
         </DialogContent>
       </Dialog>
+
+      <AlertDialog open={archiveSaleId !== null} onOpenChange={(o) => !o && setArchiveSaleId(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Delete this sale?</AlertDialogTitle>
+            <AlertDialogDescription>
+              The sale is removed from lists and reports. Line quantities are returned to inventory. This cannot be undone
+              from the app.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+              onClick={() => void confirmArchiveSale()}
+            >
+              Delete
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }

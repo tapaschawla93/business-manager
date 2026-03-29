@@ -3,7 +3,7 @@
 import { FormEvent, useCallback, useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
 import { toast } from 'sonner';
-import { Download, Plus, RefreshCw, Trash2, Truck, Upload } from 'lucide-react';
+import { Download, Pencil, Plus, RefreshCw, Trash2, Truck, Upload } from 'lucide-react';
 import { downloadCsv, rowsToCsv } from '@/lib/exportCsv';
 import {
   buildImportIssuesCsv,
@@ -202,14 +202,19 @@ export default function VendorsPage() {
         description="Suppliers and partners. Pick a directory vendor on expenses for history in one place, or type a name without linking."
         actions={
           <div className="flex flex-wrap items-center gap-2">
-            <Button type="button" variant="outline" className="h-11 gap-2 rounded-xl" onClick={downloadVendorsTemplate}>
+            <Button
+              type="button"
+              variant="outline"
+              className="h-10 gap-2 rounded-xl text-sm md:h-11 md:text-base"
+              onClick={downloadVendorsTemplate}
+            >
               <Download className="h-4 w-4" aria-hidden />
               Template
             </Button>
             <Button
               type="button"
               variant="outline"
-              className="h-11 gap-2 rounded-xl"
+              className="h-10 gap-2 rounded-xl text-sm md:h-11 md:text-base"
               disabled={importing}
               onClick={() => uploadRef.current?.click()}
             >
@@ -227,11 +232,21 @@ export default function VendorsPage() {
                 e.currentTarget.value = '';
               }}
             />
-            <Button type="button" variant="outline" size="sm" onClick={() => void load()} className="h-11 gap-2 rounded-xl">
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={() => void load()}
+              className="h-10 gap-2 rounded-xl text-sm md:h-11 md:text-base"
+            >
               <RefreshCw className="h-4 w-4" />
               Refresh
             </Button>
-            <Button type="button" onClick={() => setDialogOpen(true)} className="h-11 gap-2 rounded-xl font-semibold shadow-sm">
+            <Button
+              type="button"
+              onClick={() => setDialogOpen(true)}
+              className="h-10 gap-2 rounded-xl text-sm font-semibold shadow-sm md:h-11 md:text-base"
+            >
               <Plus className="h-4 w-4" />
               Add vendor
             </Button>
@@ -257,7 +272,11 @@ export default function VendorsPage() {
                 <p className="font-semibold text-foreground">No vendors yet</p>
                 <p className="mt-1 text-sm text-muted-foreground">Add your first supplier or service provider.</p>
               </div>
-              <Button type="button" onClick={() => setDialogOpen(true)} className="gap-2">
+              <Button
+                type="button"
+                onClick={() => setDialogOpen(true)}
+                className="h-10 gap-2 text-sm md:h-11 md:text-base"
+              >
                 <Plus className="h-4 w-4" />
                 Add vendor
               </Button>
@@ -277,7 +296,7 @@ export default function VendorsPage() {
                         <TableHead className="ui-table-head">Contact</TableHead>
                         <TableHead className="ui-table-head">Address</TableHead>
                         <TableHead className="ui-table-head">Email</TableHead>
-                        <TableHead className="ui-table-head w-[100px] text-right">Actions</TableHead>
+                        <TableHead className="ui-table-head w-[120px] text-right">Actions</TableHead>
                       </TableRow>
                     </TableHeader>
                     <TableBody>
@@ -293,16 +312,23 @@ export default function VendorsPage() {
                           <TableCell className="max-w-[200px] truncate text-muted-foreground">{v.address ?? '—'}</TableCell>
                           <TableCell className="max-w-[160px] truncate text-muted-foreground">{v.email ?? '—'}</TableCell>
                           <TableCell className="text-right">
-                            <Button
-                              type="button"
-                              variant="ghost"
-                              size="icon"
-                              className="h-9 w-9 text-muted-foreground hover:text-destructive"
-                              aria-label="Archive vendor"
-                              onClick={() => setArchiveTargetId(v.id)}
-                            >
-                              <Trash2 className="h-4 w-4" />
-                            </Button>
+                            <div className="flex justify-end gap-1">
+                              <Button type="button" variant="ghost" size="icon" className="h-9 w-9" asChild>
+                                <Link href={`/vendors/${v.id}`} aria-label="Edit vendor">
+                                  <Pencil className="h-4 w-4" />
+                                </Link>
+                              </Button>
+                              <Button
+                                type="button"
+                                variant="ghost"
+                                size="icon"
+                                className="h-9 w-9 text-muted-foreground hover:text-destructive"
+                                aria-label="Archive vendor"
+                                onClick={() => setArchiveTargetId(v.id)}
+                              >
+                                <Trash2 className="h-4 w-4" />
+                              </Button>
+                            </div>
                           </TableCell>
                         </TableRow>
                       ))}

@@ -1,6 +1,6 @@
 'use client';
 
-import { FormEvent, useCallback, useEffect, useMemo, useState } from 'react';
+import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { toast } from 'sonner';
 import { getSupabaseClient } from '@/lib/supabaseClient';
 import type { Product } from '@/lib/types/product';
@@ -15,6 +15,8 @@ import { Separator } from '@/components/ui/separator';
 import { ProductPicker } from './ProductPicker';
 import { ProductLineRow, type LineDraft } from './ProductLineRow';
 import { fetchStockByProductId } from '@/lib/queries/inventory';
+import type { SaleListRow } from '@/lib/queries/salesList';
+import { saleRpcUserHint } from '@/lib/saleRpcUserHint';
 
 function newLocalId(): string {
   return `${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
@@ -26,6 +28,18 @@ function todayLocalISODate(): string {
   const m = String(d.getMonth() + 1).padStart(2, '0');
   const day = String(d.getDate()).padStart(2, '0');
   return `${y}-${m}-${day}`;
+}
+
+/** Normalize DB `date` / timestamptz to `input[type=date]` value. */
+function saleDateToInput(iso: string): string {
+  if (!iso) return todayLocalISODate();
+  const head = iso.slice(0, 10);
+  if (/^\d{4}-\d{2}-\d{2}$/.test(head)) return head;
+  try {
+    return new Date(iso).toISOString().slice(0, 10);
+  } catch {
+    return todayLocalISODate();
+  }
 }
 
 function emptyLine(): LineDraft {
@@ -80,7 +94,18 @@ function parseSaveSaleResult(data: unknown): {
  * Mobile-first sale entry: search product → set qty/price → add more lines → Save (RPC).
  * Stored totals always come from save_sale RPC (server reads product cost/MRP).
  */
-export function SalesForm({ onSaved, compact }: { onSaved?: () => void; compact?: boolean } = {}) {
+export function SalesForm({
+  onSaved,
+  compact,
+  editSale,
+  onDiscardEdit,
+}: {
+  onSaved?: () => void;
+  compact?: boolean;
+  /** When set, submit calls `update_sale` instead of `save_sale`. */
+  editSale?: SaleListRow | null;
+  onDiscardEdit?: () => void;
+} = {}) {
   const [products, setProducts] = useState<Product[]>([]);
   const [loadingProducts, setLoadingProducts] = useState(true);
   const [date, setDate] = useState(todayLocalISODate);
@@ -94,6 +119,8 @@ export function SalesForm({ onSaved, compact }: { onSaved?: () => void; compact?
   const [stockByProduct, setStockByProduct] = useState<Record<string, number>>({});
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  /** Avoid re-hydrating edit mode when `products` refetches after save. */
+  const lastHydratedEditSaleIdRef = useRef<string | null>(null);
 
   const loadProducts = useCallback(async () => {
     const supabase = getSupabaseClient();
@@ -124,6 +151,44 @@ export function SalesForm({ onSaved, compact }: { onSaved?: () => void; compact?
   useEffect(() => {
     void refreshStock();
   }, [refreshStock]);
+
+  /** Prefill when editing an existing sale (waits for product list). */
+  useEffect(() => {
+    if (!editSale) {
+      lastHydratedEditSaleIdRef.current = null;
+      return;
+    }
+    if (products.length === 0) return;
+    if (lastHydratedEditSaleIdRef.current === editSale.sale.id) return;
+    lastHydratedEditSaleIdRef.current = editSale.sale.id;
+
+    const s = editSale.sale;
+    setDate(saleDateToInput(s.date));
+    setCustomerName(s.customer_name ?? '');
+    setCustomerPhone(s.customer_phone ?? '');
+    setCustomerAddress(s.customer_address ?? '');
+    setSaleType(s.sale_type ?? '');
+    setPaymentMode(s.payment_mode);
+    setNotes(s.notes ?? '');
+    setLines(
+      editSale.lines.length > 0
+        ? editSale.lines.map((line) => ({
+            localId: newLocalId(),
+            productId: line.product_id,
+            label:
+              line.variant?.trim() !== ''
+                ? `${line.product_name} (${line.variant})`
+                : line.product_name,
+            categoryPreview: line.category,
+            quantity: String(line.quantity),
+            salePrice: String(line.sale_price),
+            mrpPreview: line.mrp_snapshot,
+            costPreview: line.cost_price_snapshot,
+            stockOnHand: null,
+          }))
+        : [emptyLine()],
+    );
+  }, [editSale, products]);
 
   useEffect(() => {
     setLines((prev) =>
@@ -213,7 +278,7 @@ export function SalesForm({ onSaved, compact }: { onSaved?: () => void; compact?
 
     const supabase = getSupabaseClient();
     setSaving(true);
-    const { data, error: rpcErr } = await supabase.rpc('save_sale', {
+    const baseArgs = {
       p_date: date,
       p_customer_name: customerName.trim() === '' ? null : customerName.trim(),
       p_customer_phone: customerPhone.trim() === '' ? null : customerPhone.trim(),
@@ -222,31 +287,39 @@ export function SalesForm({ onSaved, compact }: { onSaved?: () => void; compact?
       p_payment_mode: paymentMode,
       p_notes: notes.trim() === '' ? null : notes.trim(),
       p_lines: payload,
-    });
+    };
+    const { data, error: rpcErr } = editSale
+      ? await supabase.rpc('update_sale', { p_sale_id: editSale.sale.id, ...baseArgs })
+      : await supabase.rpc('save_sale', baseArgs);
     setSaving(false);
 
     if (rpcErr) {
-      setError(rpcErr.message);
-      toast.error(rpcErr.message);
+      const hint = saleRpcUserHint(rpcErr.message, rpcErr.code);
+      setError(hint);
+      toast.error(hint);
       return;
     }
 
     const row = parseSaveSaleResult(data);
     if (row) {
       toast.success(
-        `Sale saved. Amount ${formatInrDisplay(row.total_amount)} · Profit ${formatInrDisplay(row.total_profit)}`,
+        editSale
+          ? `Sale updated. Amount ${formatInrDisplay(row.total_amount)} · Profit ${formatInrDisplay(row.total_profit)}`
+          : `Sale saved. Amount ${formatInrDisplay(row.total_amount)} · Profit ${formatInrDisplay(row.total_profit)}`,
       );
     } else {
       toast.warning(
         'Saved, but the server response could not be read. Confirm under Settings → Export sales.',
       );
     }
-    setCustomerName('');
-    setCustomerPhone('');
-    setCustomerAddress('');
-    setSaleType('');
-    setNotes('');
-    setLines([emptyLine()]);
+    if (!editSale) {
+      setCustomerName('');
+      setCustomerPhone('');
+      setCustomerAddress('');
+      setSaleType('');
+      setNotes('');
+      setLines([emptyLine()]);
+    }
     void loadProducts();
     void refreshStock();
     onSaved?.();
@@ -349,9 +422,16 @@ export function SalesForm({ onSaved, compact }: { onSaved?: () => void; compact?
 
       {error && <p className="text-sm text-destructive">{error}</p>}
 
-      <Button type="submit" size="full" disabled={saving || loadingProducts}>
-        {saving ? 'Saving…' : 'Save sale'}
-      </Button>
+      <div className="flex flex-col gap-2">
+        {editSale ? (
+          <Button type="button" variant="outline" className="h-10 text-sm md:h-11 md:text-base" onClick={onDiscardEdit}>
+            Cancel
+          </Button>
+        ) : null}
+        <Button type="submit" size="full" disabled={saving || loadingProducts}>
+          {saving ? 'Saving…' : editSale ? 'Save changes' : 'Save sale'}
+        </Button>
+      </div>
     </form>
   );
 }

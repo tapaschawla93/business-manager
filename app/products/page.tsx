@@ -334,14 +334,19 @@ export default function ProductsPage() {
         description="Master list of all products and their category mappings."
         actions={
           <>
-            <Button type="button" variant="outline" className="h-11 gap-2 rounded-xl" onClick={downloadProductsTemplate}>
+            <Button
+              type="button"
+              variant="outline"
+              className="h-10 gap-2 rounded-xl text-sm md:h-11 md:text-base"
+              onClick={downloadProductsTemplate}
+            >
               <Download className="h-4 w-4" aria-hidden />
               Template
             </Button>
             <Button
               type="button"
               variant="outline"
-              className="h-11 gap-2 rounded-xl"
+              className="h-10 gap-2 rounded-xl text-sm md:h-11 md:text-base"
               onClick={() => productsUploadRef.current?.click()}
               disabled={importing}
             >
@@ -359,7 +364,11 @@ export default function ProductsPage() {
                 e.currentTarget.value = '';
               }}
             />
-            <Button type="button" onClick={openAdd} className="h-11 gap-2 rounded-xl font-semibold shadow-sm">
+            <Button
+              type="button"
+              onClick={openAdd}
+              className="h-10 gap-2 rounded-xl text-sm font-semibold shadow-sm md:h-11 md:text-base"
+            >
               <Plus className="h-4 w-4" aria-hidden />
               Add Product
             </Button>
@@ -380,7 +389,7 @@ export default function ProductsPage() {
         <Button
           type="button"
           variant="outline"
-          className="h-11 gap-2 rounded-xl border-border/80 font-semibold"
+          className="h-10 gap-2 rounded-xl border-border/80 text-sm font-semibold md:h-11 md:text-base"
           onClick={() => void loadProducts()}
         >
           <RefreshCw className="h-4 w-4" />
@@ -403,7 +412,11 @@ export default function ProductsPage() {
                   <p className="text-base font-semibold text-foreground">No products yet</p>
                   <p className="mt-1 text-sm text-muted-foreground">Add your first product</p>
                 </div>
-                <Button type="button" onClick={openAdd} className="gap-2">
+                <Button
+                  type="button"
+                  onClick={openAdd}
+                  className="h-10 gap-2 text-sm md:h-11 md:text-base"
+                >
                   <Plus className="h-4 w-4" />
                   Add your first product
                 </Button>

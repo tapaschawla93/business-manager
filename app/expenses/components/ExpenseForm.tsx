@@ -618,7 +618,7 @@ export function ExpenseForm({
             <div className="flex flex-col gap-2 sm:flex-row">
               <Button
                 type="button"
-                className="h-11 rounded-xl font-semibold"
+                className="h-10 rounded-xl text-sm font-semibold md:h-11 md:text-base"
                 disabled={saving}
                 onClick={() => void retryStockLedgerSync()}
               >
@@ -627,7 +627,7 @@ export function ExpenseForm({
               <Button
                 type="button"
                 variant="outline"
-                className="h-11 rounded-xl"
+                className="h-10 rounded-xl text-sm md:h-11 md:text-base"
                 disabled={saving}
                 onClick={() => resetFormAfterNewStockExpenseSaved()}
               >
@@ -639,7 +639,7 @@ export function ExpenseForm({
         {error && <p className="text-sm text-destructive">{error}</p>}
         <div className="flex flex-col gap-2">
           {editing && (
-            <Button type="button" variant="outline" className="h-11" onClick={onDiscardEdit}>
+            <Button type="button" variant="outline" className="h-10 text-sm md:h-11 md:text-base" onClick={onDiscardEdit}>
               Cancel
             </Button>
           )}
@@ -647,7 +647,7 @@ export function ExpenseForm({
             type="submit"
             size="full"
             disabled={saving || (!!pendingStockLedgerSync && !editing)}
-            className="h-12 rounded-xl text-base font-semibold"
+            className="rounded-xl"
           >
             {saving ? 'Saving…' : editing ? 'Save changes' : 'Save expense'}
           </Button>

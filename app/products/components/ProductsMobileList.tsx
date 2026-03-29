@@ -1,7 +1,7 @@
 'use client';
 
 import { useState } from 'react';
-import { Pencil, Plus, Trash2 } from 'lucide-react';
+import { MoreVertical, Plus } from 'lucide-react';
 import type { Product } from '@/lib/types/product';
 import { getProductMargin, productMarginToneClass } from '@/lib/products/productMargin';
 import { formatInrDisplay } from '@/lib/formatInr';
@@ -9,6 +9,12 @@ import { cn } from '@/lib/utils';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { MobileAccordionBody, MobileAccordionChevron } from '@/components/mobile/MobileAccordion';
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu';
 
 type Props = {
   products: Product[];
@@ -23,10 +29,15 @@ export function ProductsMobileList({ products, onEdit, onArchive, onAdd }: Props
 
   if (products.length === 0) {
     return (
-      <div className="flex min-h-[220px] flex-col items-center justify-center gap-3 px-3 py-8 text-center">
+      <div className="flex min-h-[220px] flex-col items-center justify-center gap-3 px-1 py-8 text-center">
         <p className="text-sm font-medium text-foreground">No matching products</p>
         <p className="text-xs text-muted-foreground">Try a different search or add a product.</p>
-        <Button type="button" size="sm" className="gap-2 rounded-xl" onClick={onAdd}>
+        <Button
+          type="button"
+          size="sm"
+          className="h-10 gap-2 rounded-xl text-sm md:h-11 md:text-base"
+          onClick={onAdd}
+        >
           <Plus className="h-4 w-4" />
           Add product
         </Button>
@@ -35,7 +46,7 @@ export function ProductsMobileList({ products, onEdit, onArchive, onAdd }: Props
   }
 
   return (
-    <div className="space-y-2 px-2 pb-2 pt-1">
+    <div className="space-y-2 px-0.5 pb-2 pt-1">
       {products.map((p) => {
         const open = openId === p.id;
         const panelId = `product-${p.id}-detail`;
@@ -46,10 +57,10 @@ export function ProductsMobileList({ products, onEdit, onArchive, onAdd }: Props
             key={p.id}
             className="overflow-hidden rounded-lg border border-border/60 bg-card text-xs shadow-sm"
           >
-            <div className="flex min-h-11 items-stretch gap-1">
+            <div className="flex min-h-11 items-stretch">
               <button
                 type="button"
-                className="flex min-w-0 flex-1 items-center gap-1.5 px-2 py-2 text-left transition-colors hover:bg-muted/30 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                className="flex min-w-0 flex-1 items-center gap-1.5 px-1.5 py-2 text-left transition-colors hover:bg-muted/30 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                 aria-expanded={open}
                 aria-controls={panelId}
                 onClick={() => setOpenId(open ? null : p.id)}
@@ -67,27 +78,29 @@ export function ProductsMobileList({ products, onEdit, onArchive, onAdd }: Props
                 </div>
                 <MobileAccordionChevron open={open} className="h-4 w-4 shrink-0 self-center" />
               </button>
-              <div className="flex shrink-0 items-center gap-0.5 border-l border-border/40 px-1">
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="icon"
-                  className="h-8 w-8"
-                  aria-label="Edit"
-                  onClick={() => onEdit(p)}
-                >
-                  <Pencil className="h-3.5 w-3.5" />
-                </Button>
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="icon"
-                  className="h-8 w-8 text-muted-foreground hover:text-destructive"
-                  aria-label="Archive"
-                  onClick={() => onArchive(p.id)}
-                >
-                  <Trash2 className="h-3.5 w-3.5" />
-                </Button>
+              <div className="flex shrink-0 items-stretch border-l border-border/40">
+                <DropdownMenu>
+                  <DropdownMenuTrigger asChild>
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="icon"
+                      className="h-auto min-h-11 w-9 shrink-0 rounded-none"
+                      aria-label="Row actions"
+                    >
+                      <MoreVertical className="h-4 w-4" aria-hidden />
+                    </Button>
+                  </DropdownMenuTrigger>
+                  <DropdownMenuContent align="end" className="w-40">
+                    <DropdownMenuItem onSelect={() => onEdit(p)}>Edit</DropdownMenuItem>
+                    <DropdownMenuItem
+                      className="text-destructive focus:bg-destructive/10 focus:text-destructive"
+                      onSelect={() => onArchive(p.id)}
+                    >
+                      Archive
+                    </DropdownMenuItem>
+                  </DropdownMenuContent>
+                </DropdownMenu>
               </div>
             </div>
             <MobileAccordionBody open={open} contentId={panelId}>

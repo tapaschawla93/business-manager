@@ -51,8 +51,8 @@ export function ExpenseList({
           </div>
         ) : (
           <>
-            <div className="md:hidden">
-              <ExpenseMobileList expenses={expenses} onEdit={onEdit} onArchive={onArchive} />
+            <div className="px-0.5 md:hidden">
+              <ExpenseMobileList expenses={expenses} onArchive={onArchive} />
             </div>
             <div className="hidden md:block">
               <div className="overflow-x-auto">

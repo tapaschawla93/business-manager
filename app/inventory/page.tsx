@@ -2,7 +2,7 @@
 
 import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { toast } from 'sonner';
-import { Download, Pencil, Plus, RefreshCw, Search, Upload, Warehouse } from 'lucide-react';
+import { Download, Pencil, Plus, RefreshCw, Search, Trash2, Upload, Warehouse } from 'lucide-react';
 import { downloadCsv, rowsToCsv } from '@/lib/exportCsv';
 import { parseCsv } from '@/lib/importCsv';
 import { importInventoryCsvRows, inventoryImportIssuesCsv } from '@/lib/inventory/importInventoryCsv';
@@ -27,6 +27,16 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Skeleton } from '@/components/ui/skeleton';
 import { SessionRedirectNotice } from '@/components/SessionRedirectNotice';
@@ -65,6 +75,7 @@ export default function InventoryPage() {
   const [saving, setSaving] = useState(false);
   /** For edit: prior unit cost — RPC sync only when cost changes (add always syncs when linked). */
   const [baselineUnitCost, setBaselineUnitCost] = useState<number | null>(null);
+  const [deleteLineTargetId, setDeleteLineTargetId] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     if (!businessId) return;
@@ -343,6 +354,53 @@ export default function InventoryPage() {
     await load();
   }
 
+  /**
+   * Deletes a manual inventory row without relying on `delete_inventory_item` RPC (works even if that
+   * migration was not applied). Pulls linked on-hand qty off the ledger first, then removes the row.
+   */
+  async function confirmDeleteInventoryLine() {
+    const id = deleteLineTargetId;
+    if (!businessId || !id) return;
+    const target = rows.find((r) => r.id === id);
+    setDeleteLineTargetId(null);
+    if (!target) {
+      toast.error('That line is no longer in the list.');
+      return;
+    }
+
+    const supabase = getSupabaseClient();
+    const pid = target.product_id;
+    const stock = Number(target.current_stock);
+    if (pid && Number.isFinite(stock) && stock > 0) {
+      const { error: dErr } = await supabase.rpc('inventory_apply_delta_for_tenant', {
+        p_business_id: businessId,
+        p_product_id: pid,
+        p_delta: -stock,
+      });
+      if (dErr) {
+        toast.error(dErr.message);
+        return;
+      }
+    }
+
+    const { error: delErr } = await supabase
+      .from('inventory_items')
+      .delete()
+      .eq('id', id)
+      .eq('business_id', businessId);
+    if (delErr) {
+      toast.error(delErr.message);
+      return;
+    }
+
+    toast.success('Inventory line removed');
+    if (editingId === id) {
+      resetForm();
+      setDialogOpen(false);
+    }
+    await load();
+  }
+
   if (session.kind === 'loading') {
     return (
       <div className="space-y-8">
@@ -376,14 +434,19 @@ export default function InventoryPage() {
         description="Each line is tied to a catalog product. On-hand quantity stays in sync with sales and stock-purchase expenses. When adding a line, Units to Add increases stock for that product."
         actions={
           <>
-            <Button type="button" variant="outline" className="h-11 gap-2 rounded-xl" onClick={downloadInventoryTemplate}>
+            <Button
+              type="button"
+              variant="outline"
+              className="h-10 gap-2 rounded-xl text-sm md:h-11 md:text-base"
+              onClick={downloadInventoryTemplate}
+            >
               <Download className="h-4 w-4" aria-hidden />
               Template
             </Button>
             <Button
               type="button"
               variant="outline"
-              className="h-11 gap-2 rounded-xl"
+              className="h-10 gap-2 rounded-xl text-sm md:h-11 md:text-base"
               disabled={importing}
               onClick={() => uploadRef.current?.click()}
             >
@@ -401,11 +464,20 @@ export default function InventoryPage() {
                 e.currentTarget.value = '';
               }}
             />
-            <Button type="button" variant="outline" className="h-11 gap-2 rounded-xl" onClick={() => void load()}>
+            <Button
+              type="button"
+              variant="outline"
+              className="h-10 gap-2 rounded-xl text-sm md:h-11 md:text-base"
+              onClick={() => void load()}
+            >
               <RefreshCw className="h-4 w-4" aria-hidden />
               Refresh
             </Button>
-            <Button type="button" className="h-11 gap-2 rounded-xl font-semibold shadow-sm" onClick={openAdd}>
+            <Button
+              type="button"
+              className="h-10 gap-2 rounded-xl text-sm font-semibold shadow-sm md:h-11 md:text-base"
+              onClick={openAdd}
+            >
               <Plus className="h-4 w-4" aria-hidden />
               Add line
             </Button>
@@ -470,7 +542,7 @@ export default function InventoryPage() {
                 <Warehouse className="h-7 w-7 text-muted-foreground" />
               </div>
               <p className="text-sm text-muted-foreground">No inventory lines yet.</p>
-              <Button type="button" onClick={openAdd} className="gap-2">
+              <Button type="button" onClick={openAdd} className="h-10 gap-2 text-sm md:h-11 md:text-base">
                 <Plus className="h-4 w-4" />
                 Add your first line
               </Button>
@@ -494,6 +566,7 @@ export default function InventoryPage() {
                   rows={visibleRows}
                   products={products}
                   onEdit={startEdit}
+                  onDeleteLine={(row) => setDeleteLineTargetId(row.id)}
                   dimZeroStock={showZeroStock}
                 />
               </div>
@@ -509,7 +582,7 @@ export default function InventoryPage() {
                         <TableHead className="ui-table-head text-right">Value</TableHead>
                         <TableHead className="ui-table-head">Reorder</TableHead>
                         <TableHead className="ui-table-head">Product</TableHead>
-                        <TableHead className="ui-table-head text-right w-[100px]">Actions</TableHead>
+                        <TableHead className="ui-table-head text-right w-[120px]">Actions</TableHead>
                       </TableRow>
                     </TableHeader>
                     <TableBody>
@@ -546,16 +619,28 @@ export default function InventoryPage() {
                               )}
                             </TableCell>
                             <TableCell className="text-right">
-                              <Button
-                                type="button"
-                                variant="ghost"
-                                size="icon"
-                                className="h-9 w-9"
-                                aria-label="Edit"
-                                onClick={() => startEdit(r)}
-                              >
-                                <Pencil className="h-4 w-4" />
-                              </Button>
+                              <div className="flex justify-end gap-1">
+                                <Button
+                                  type="button"
+                                  variant="ghost"
+                                  size="icon"
+                                  className="h-9 w-9"
+                                  aria-label="Edit"
+                                  onClick={() => startEdit(r)}
+                                >
+                                  <Pencil className="h-4 w-4" />
+                                </Button>
+                                <Button
+                                  type="button"
+                                  variant="ghost"
+                                  size="icon"
+                                  className="h-9 w-9 text-muted-foreground hover:text-destructive"
+                                  aria-label="Delete line"
+                                  onClick={() => setDeleteLineTargetId(r.id)}
+                                >
+                                  <Trash2 className="h-4 w-4" />
+                                </Button>
+                              </div>
                             </TableCell>
                           </TableRow>
                         );
@@ -568,6 +653,27 @@ export default function InventoryPage() {
           )}
         </CardContent>
       </Card>
+
+      <AlertDialog open={deleteLineTargetId !== null} onOpenChange={(o) => !o && setDeleteLineTargetId(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Delete inventory line?</AlertDialogTitle>
+            <AlertDialogDescription>
+              Removes this row and returns its on-hand quantity to the stock ledger for linked products. This cannot be
+              undone from the app.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+              onClick={() => void confirmDeleteInventoryLine()}
+            >
+              Delete
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
 
       <Dialog open={dialogOpen} onOpenChange={handleDialogOpenChange}>
         <DialogContent className="max-h-[min(90vh,720px)] overflow-y-auto sm:max-w-lg">

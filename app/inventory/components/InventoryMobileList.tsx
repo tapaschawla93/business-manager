@@ -1,13 +1,19 @@
 'use client';
 
 import { useMemo, useState } from 'react';
-import { Pencil } from 'lucide-react';
+import { MoreVertical } from 'lucide-react';
 import type { InventoryItem } from '@/lib/types/inventoryItem';
 import type { Product } from '@/lib/types/product';
 import { formatInrDisplay } from '@/lib/formatInr';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { MobileAccordionBody, MobileAccordionChevron } from '@/components/mobile/MobileAccordion';
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu';
 
 function isLowStock(row: InventoryItem): boolean {
   if (row.reorder_level == null) return false;
@@ -19,6 +25,8 @@ type Props = {
   products: Product[];
   /** Opens the inventory dialog (link product, stub, stock, cost). */
   onEdit: (row: InventoryItem) => void;
+  /** Parent confirms delete: ledger delta + row delete (see inventory page). */
+  onDeleteLine: (row: InventoryItem) => void;
   /** When true, zero on-hand rows use a muted / warning surface (toggle “Show zero stock”). */
   dimZeroStock?: boolean;
 };
@@ -27,7 +35,7 @@ type Props = {
  * Collapsed: catalog name · variant · category when linked; otherwise line name · — · — plus “Add to catalog”.
  * Expanded: stock, costs, unit, reorder, line name.
  */
-export function InventoryMobileList({ rows, products, onEdit, dimZeroStock }: Props) {
+export function InventoryMobileList({ rows, products, onEdit, onDeleteLine, dimZeroStock }: Props) {
   const [openId, setOpenId] = useState<string | null>(null);
   const productById = useMemo(() => new Map(products.map((p) => [p.id, p])), [products]);
 
@@ -101,17 +109,29 @@ export function InventoryMobileList({ rows, products, onEdit, dimZeroStock }: Pr
                 </div>
                 <MobileAccordionChevron open={open} className="h-4 w-4 shrink-0 self-center" />
               </button>
-              <div className="flex shrink-0 items-center border-l border-border/40 px-1">
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="icon"
-                  className="h-8 w-8"
-                  aria-label="Edit"
-                  onClick={() => onEdit(r)}
-                >
-                  <Pencil className="h-3.5 w-3.5" />
-                </Button>
+              <div className="flex shrink-0 items-stretch border-l border-border/40">
+                <DropdownMenu>
+                  <DropdownMenuTrigger asChild>
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="icon"
+                      className="h-auto min-h-11 w-9 shrink-0 rounded-none"
+                      aria-label="Row actions"
+                    >
+                      <MoreVertical className="h-4 w-4" aria-hidden />
+                    </Button>
+                  </DropdownMenuTrigger>
+                  <DropdownMenuContent align="end" className="w-40">
+                    <DropdownMenuItem onSelect={() => onEdit(r)}>Edit</DropdownMenuItem>
+                    <DropdownMenuItem
+                      className="text-destructive focus:bg-destructive/10 focus:text-destructive"
+                      onSelect={() => onDeleteLine(r)}
+                    >
+                      Delete
+                    </DropdownMenuItem>
+                  </DropdownMenuContent>
+                </DropdownMenu>
               </div>
             </div>
             <MobileAccordionBody open={open} contentId={panelId}>

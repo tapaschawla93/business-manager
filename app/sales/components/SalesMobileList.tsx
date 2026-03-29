@@ -1,12 +1,18 @@
 'use client';
 
 import { useState } from 'react';
-import { ChevronDown, Plus } from 'lucide-react';
+import { ChevronDown, MoreVertical, Plus } from 'lucide-react';
 import type { SaleListLineDetail, SaleListRow } from '@/lib/queries/salesList';
 import { formatInrDisplay } from '@/lib/formatInr';
 import { cn } from '@/lib/utils';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu';
 
 function formatDateShort(iso: string): string {
   try {
@@ -79,15 +85,17 @@ type Props = {
   rows: SaleListRow[] | null;
   loading: boolean;
   onNewSale: () => void;
+  onEditSale: (row: SaleListRow) => void;
+  onArchiveSale: (saleId: string) => void;
 };
 
-/** `prd.v2.mobile-polish`: accordion list below `md`; desktop uses `<Table>`. */
-export function SalesMobileList({ rows, loading, onNewSale }: Props) {
+/** Accordion list below `md`; collapsed row shows customer, total, payment only (order # and detail in expanded). */
+export function SalesMobileList({ rows, loading, onNewSale, onEditSale, onArchiveSale }: Props) {
   const [openSaleId, setOpenSaleId] = useState<string | null>(null);
 
   if (loading) {
     return (
-      <div className="rounded-xl border border-border/60 bg-card px-4 py-12 text-center text-sm text-muted-foreground">
+      <div className="rounded-xl border border-border/60 bg-card px-3 py-12 text-center text-sm text-muted-foreground">
         Loading sales…
       </div>
     );
@@ -95,10 +103,14 @@ export function SalesMobileList({ rows, loading, onNewSale }: Props) {
 
   if (!rows?.length) {
     return (
-      <div className="rounded-xl border border-border/60 bg-card px-4 py-16 text-center">
+      <div className="rounded-xl border border-border/60 bg-card px-3 py-16 text-center">
         <p className="text-sm font-semibold text-foreground">No sales yet</p>
         <p className="mt-1 text-sm text-muted-foreground">Record your first sale with New Sale.</p>
-        <Button type="button" className="mt-4 rounded-xl font-semibold" onClick={onNewSale}>
+        <Button
+          type="button"
+          className="mt-4 h-10 rounded-xl text-sm font-semibold md:h-11 md:text-base"
+          onClick={onNewSale}
+        >
           <Plus className="mr-2 h-4 w-4" aria-hidden />
           New Sale
         </Button>
@@ -107,7 +119,7 @@ export function SalesMobileList({ rows, loading, onNewSale }: Props) {
   }
 
   return (
-    <div className="space-y-2 px-0.5">
+    <div className="space-y-2 px-0">
       {rows.map((r) => {
         const open = openSaleId === r.sale.id;
         const customer = r.sale.customer_name?.trim() || '—';
@@ -119,42 +131,62 @@ export function SalesMobileList({ rows, loading, onNewSale }: Props) {
             key={r.sale.id}
             className="overflow-hidden rounded-lg border border-border/60 bg-card text-xs shadow-sm"
           >
-            <button
-              type="button"
-              className="flex min-h-11 w-full items-center gap-1 px-2 py-2 text-left transition-colors hover:bg-muted/30 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
-              aria-expanded={open}
-              aria-controls={salePanelId}
-              onClick={() => setOpenSaleId(open ? null : r.sale.id)}
-            >
-              <span className="shrink-0 font-mono text-[11px] font-semibold tabular-nums text-foreground">
-                {orderLabel(r.sale.id)}
-              </span>
-              <span className="shrink-0 text-muted-foreground/70" aria-hidden>
-                ·
-              </span>
-              <span className="min-w-0 flex-1 truncate font-medium text-foreground">{customer}</span>
-              <span className="shrink-0 text-xs font-bold tabular-nums text-foreground">
-                {formatInrDisplay(Number(r.sale.total_amount))}
-              </span>
-              <Badge
-                variant="outline"
-                className={cn(
-                  'shrink-0 px-1.5 py-0 text-[10px] font-semibold capitalize',
-                  r.sale.payment_mode === 'online'
-                    ? 'border-primary/25 bg-primary/5 text-primary'
-                    : '',
-                )}
+            <div className="flex min-h-11 items-stretch">
+              <button
+                type="button"
+                className="flex min-w-0 flex-1 items-center gap-2 px-1.5 py-2 text-left transition-colors hover:bg-muted/30 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
+                aria-expanded={open}
+                aria-controls={salePanelId}
+                onClick={() => setOpenSaleId(open ? null : r.sale.id)}
               >
-                {r.sale.payment_mode === 'online' ? 'Online' : 'Cash'}
-              </Badge>
-              <ChevronDown
-                className={cn(
-                  'h-4 w-4 shrink-0 text-muted-foreground transition-transform duration-300 ease-out motion-reduce:transition-none',
-                  open && 'rotate-180',
-                )}
-                aria-hidden
-              />
-            </button>
+                <span className="min-w-0 flex-1 truncate font-medium text-foreground">{customer}</span>
+                <span className="shrink-0 text-xs font-bold tabular-nums text-foreground">
+                  {formatInrDisplay(Number(r.sale.total_amount))}
+                </span>
+                <Badge
+                  variant="outline"
+                  className={cn(
+                    'shrink-0 px-1.5 py-0 text-[10px] font-semibold capitalize',
+                    r.sale.payment_mode === 'online'
+                      ? 'border-primary/25 bg-primary/5 text-primary'
+                      : '',
+                  )}
+                >
+                  {r.sale.payment_mode === 'online' ? 'Online' : 'Cash'}
+                </Badge>
+                <ChevronDown
+                  className={cn(
+                    'h-4 w-4 shrink-0 text-muted-foreground transition-transform duration-300 ease-out motion-reduce:transition-none',
+                    open && 'rotate-180',
+                  )}
+                  aria-hidden
+                />
+              </button>
+              <div className="flex shrink-0 items-stretch border-l border-border/40">
+                <DropdownMenu>
+                  <DropdownMenuTrigger asChild>
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="icon"
+                      className="h-auto min-h-11 w-9 shrink-0 rounded-none"
+                      aria-label="Row actions"
+                    >
+                      <MoreVertical className="h-4 w-4" aria-hidden />
+                    </Button>
+                  </DropdownMenuTrigger>
+                  <DropdownMenuContent align="end" className="w-40">
+                    <DropdownMenuItem onSelect={() => onEditSale(r)}>Edit</DropdownMenuItem>
+                    <DropdownMenuItem
+                      className="text-destructive focus:bg-destructive/10 focus:text-destructive"
+                      onSelect={() => onArchiveSale(r.sale.id)}
+                    >
+                      Delete
+                    </DropdownMenuItem>
+                  </DropdownMenuContent>
+                </DropdownMenu>
+              </div>
+            </div>
 
             <div
               className={cn(
@@ -167,11 +199,18 @@ export function SalesMobileList({ rows, loading, onNewSale }: Props) {
                 <div
                   id={salePanelId}
                   role="region"
-                  className="space-y-3 border-t border-border/50 bg-muted/40 px-3 pb-4 pt-3"
+                  className="space-y-3 border-t border-border/50 bg-muted/40 px-2.5 pb-4 pt-3"
                 >
-                  <p className="text-xs font-medium text-muted-foreground">
-                    {formatDateShort(r.sale.date)}
-                  </p>
+                  <div className="space-y-1">
+                    <p className="text-[11px] font-medium text-muted-foreground">Order</p>
+                    <p className="font-mono text-xs font-semibold tabular-nums text-foreground">
+                      {orderLabel(r.sale.id)}
+                    </p>
+                  </div>
+                  <div className="space-y-1">
+                    <p className="text-[11px] font-medium text-muted-foreground">Date</p>
+                    <p className="text-xs font-medium text-foreground">{formatDateShort(r.sale.date)}</p>
+                  </div>
                   {(r.sale.customer_phone || r.sale.customer_address || r.sale.sale_type) && (
                     <div className="space-y-1 text-xs text-muted-foreground">
                       {r.sale.customer_phone ? <p>Phone: {r.sale.customer_phone}</p> : null}

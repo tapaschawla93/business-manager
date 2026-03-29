@@ -234,14 +234,19 @@ export default function ExpensesPage() {
         description="Operating costs and stock purchases. Use Stock Purchase when buying inventory (updates catalog cost and stock). Otherwise use a single amount and optional category."
         actions={
           <>
-            <Button type="button" variant="outline" className="h-11 gap-2 rounded-xl" onClick={downloadExpensesTemplate}>
+            <Button
+              type="button"
+              variant="outline"
+              className="h-10 gap-2 rounded-xl text-sm md:h-11 md:text-base"
+              onClick={downloadExpensesTemplate}
+            >
               <Download className="h-4 w-4" aria-hidden />
               Template
             </Button>
             <Button
               type="button"
               variant="outline"
-              className="h-11 gap-2 rounded-xl"
+              className="h-10 gap-2 rounded-xl text-sm md:h-11 md:text-base"
               onClick={() => document.getElementById('expenses-upload-input')?.click()}
               disabled={importing}
             >
@@ -259,7 +264,11 @@ export default function ExpensesPage() {
                 e.currentTarget.value = '';
               }}
             />
-            <Button type="button" className="h-11 gap-2 rounded-xl font-semibold shadow-sm" onClick={openNew}>
+            <Button
+              type="button"
+              className="h-10 gap-2 rounded-xl text-sm font-semibold shadow-sm md:h-11 md:text-base"
+              onClick={openNew}
+            >
               <Plus className="h-4 w-4" aria-hidden />
               New expense
             </Button>
