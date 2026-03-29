@@ -18,18 +18,16 @@ import { formatInrDisplay } from '@/lib/formatInr';
 import { PageHeader } from '@/components/PageHeader';
 import { KPICard } from '@/components/dashboard/KPICard';
 import { TopProductsTable } from '@/components/dashboard/TopProductsTable';
-import { PaymentCollectionsCard } from '@/components/dashboard/PaymentCollectionsCard';
 import { SalesByCategoryTable } from '@/components/dashboard/SalesByCategoryTable';
+import { DashboardDateRangeControl } from '@/components/dashboard/DashboardDateRangeControl';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
-import { Label } from '@/components/ui/label';
 import {
   BarChart3,
   CircleDollarSign,
   Download,
-  Package2,
   TrendingUp,
+  Wallet,
   Warehouse,
 } from 'lucide-react';
 import { toast } from 'sonner';
@@ -57,25 +55,6 @@ function DashboardSkeleton({ phase }: { phase: 'session' | 'data' }) {
   );
 }
 
-function parseYmd(s: string): { y: number; m: number; d: number } | null {
-  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(s.trim());
-  if (!m) return null;
-  const y = Number(m[1]);
-  const mo = Number(m[2]);
-  const d = Number(m[3]);
-  if (mo < 1 || mo > 12 || d < 1 || d > 31) return null;
-  return { y, m: mo, d };
-}
-
-function compareYmd(a: string, b: string): number {
-  const pa = parseYmd(a);
-  const pb = parseYmd(b);
-  if (!pa || !pb) return 0;
-  if (pa.y !== pb.y) return pa.y - pb.y;
-  if (pa.m !== pb.m) return pa.m - pb.m;
-  return pa.d - pb.d;
-}
-
 export default function HomePage() {
   const session = useBusinessSession({ onMissingBusiness: 'error' });
   const sessionReady = session.kind === 'ready';
@@ -83,8 +62,6 @@ export default function HomePage() {
   const [loadingDashboard, setLoadingDashboard] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const [dateFrom, setDateFrom] = useState('');
-  const [dateTo, setDateTo] = useState('');
   const [appliedRange, setAppliedRange] = useState<DashboardDateRange | null>(null);
 
   const [kpis, setKpis] = useState<DashboardKPIs | null>(null);
@@ -94,10 +71,7 @@ export default function HomePage() {
 
   useEffect(() => {
     if (!sessionReady) return;
-    const ytd = defaultDashboardYtdRange();
-    setDateFrom(ytd.from);
-    setDateTo(ytd.to);
-    setAppliedRange(ytd);
+    setAppliedRange(defaultDashboardYtdRange());
   }, [sessionReady]);
 
   const loadDashboard = useCallback(async (range: DashboardDateRange) => {
@@ -110,7 +84,7 @@ export default function HomePage() {
       const [kpiRes, topRes] = await withTimeout(
         Promise.all([getDashboardKPIs(supabase, range), getTopProducts(supabase, range)]),
         25_000,
-        'Dashboard request timed out. If you just updated SQL, apply migration 20260330140000_dashboard_v2_date_range.sql on Supabase, then refresh.',
+        'Dashboard request timed out. Apply migrations 20260331130000_expenses_update_inventory_flag.sql and 20260331140000_dashboard_kpis_net_cash_inventory_items.sql on Supabase, then refresh.',
       );
       if (gen !== loadDashboardGenRef.current) return;
       if (kpiRes.error) throw kpiRes.error;
@@ -134,25 +108,6 @@ export default function HomePage() {
     if (!sessionReady || !appliedRange) return;
     void loadDashboard(appliedRange);
   }, [sessionReady, appliedRange, loadDashboard]);
-
-  const applyDateRange = useCallback(() => {
-    if (!parseYmd(dateFrom) || !parseYmd(dateTo)) {
-      toast.error('Use a valid from / to date (YYYY-MM-DD).');
-      return;
-    }
-    if (compareYmd(dateFrom, dateTo) > 0) {
-      toast.error('From date must be on or before To date.');
-      return;
-    }
-    setAppliedRange({ from: dateFrom, to: dateTo });
-  }, [dateFrom, dateTo]);
-
-  const resetYtd = useCallback(() => {
-    const ytd = defaultDashboardYtdRange();
-    setDateFrom(ytd.from);
-    setDateTo(ytd.to);
-    setAppliedRange(ytd);
-  }, []);
 
   if (session.kind === 'loading') {
     return <DashboardSkeleton phase="session" />;
@@ -187,11 +142,6 @@ export default function HomePage() {
       ? `${((kpis.gross_profit / kpis.total_revenue) * 100).toFixed(1)}%`
       : '0.0%';
 
-  const rangeLabel =
-    appliedRange && parseYmd(appliedRange.from) && parseYmd(appliedRange.to)
-      ? `${appliedRange.from} → ${appliedRange.to}`
-      : null;
-
   return (
     <div
       className={
@@ -201,7 +151,7 @@ export default function HomePage() {
       <PageHeader
         className="max-md:gap-2"
         title="Dashboard Overview"
-        description="Operating summary for the selected period: revenue, spend, stock at cost, collections split, and product/category breakdowns."
+        description="Operating summary for the selected period: revenue, spend, cash position (sales minus expenses by payment mode), stock on hand at cost, and product/category breakdowns."
         actions={
           <>
             <Button
@@ -217,56 +167,12 @@ export default function HomePage() {
         }
       />
 
-      <div className="flex flex-col gap-3 rounded-card border border-border/70 bg-card/40 p-3 shadow-sm sm:flex-row sm:flex-wrap sm:items-end md:gap-4 md:p-4">
-        <div className="grid gap-1.5 sm:min-w-[160px] md:gap-2">
-          <Label htmlFor="dash-from" className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground md:text-xs">
-            From
-          </Label>
-          <Input
-            id="dash-from"
-            type="date"
-            value={dateFrom}
-            onChange={(e) => setDateFrom(e.target.value)}
-            className="h-10 rounded-xl text-sm font-medium md:h-11 md:text-base"
-          />
-        </div>
-        <div className="grid gap-1.5 sm:min-w-[160px] md:gap-2">
-          <Label htmlFor="dash-to" className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground md:text-xs">
-            To
-          </Label>
-          <Input
-            id="dash-to"
-            type="date"
-            value={dateTo}
-            onChange={(e) => setDateTo(e.target.value)}
-            className="h-10 rounded-xl text-sm font-medium md:h-11 md:text-base"
-          />
-        </div>
-        <div className="flex flex-wrap gap-2">
-          <Button
-            type="button"
-            className="h-10 rounded-xl text-sm font-semibold md:h-11 md:text-base"
-            onClick={() => applyDateRange()}
-            disabled={loadingDashboard}
-          >
-            Apply range
-          </Button>
-          <Button
-            type="button"
-            variant="secondary"
-            className="h-10 rounded-xl text-sm font-semibold md:h-11 md:text-base"
-            onClick={() => resetYtd()}
-            disabled={loadingDashboard}
-          >
-            Reset to YTD
-          </Button>
-        </div>
-        {rangeLabel ? (
-          <p className="w-full text-xs text-muted-foreground sm:ml-auto sm:w-auto sm:text-right md:text-sm">
-            Showing: <span className="font-medium text-foreground">{rangeLabel}</span>
-          </p>
-        ) : null}
-      </div>
+      <DashboardDateRangeControl
+        appliedRange={appliedRange}
+        onApply={setAppliedRange}
+        onYtd={() => setAppliedRange(defaultDashboardYtdRange())}
+        disabled={loadingDashboard}
+      />
 
       {error ? <p className="text-sm text-destructive">{error}</p> : null}
 
@@ -278,15 +184,6 @@ export default function HomePage() {
         <>
           <section className="grid grid-cols-2 gap-3 md:gap-4 md:grid-cols-3">
             <KPICard
-              icon={<Warehouse className="h-5 w-5 shrink-0" aria-hidden />}
-              label="Inventory Value"
-              value={formatInrDisplay(kpis.inventory_value)}
-              hint="Stock at catalogue cost (current)"
-              trendLabel="Stock"
-              trendVariant="neutral"
-              iconClassName="bg-muted text-muted-foreground"
-            />
-            <KPICard
               icon={<CircleDollarSign className="h-5 w-5" aria-hidden />}
               label="Total Revenue"
               value={formatInrDisplay(kpis.total_revenue)}
@@ -295,34 +192,6 @@ export default function HomePage() {
               trendVariant={kpis.total_revenue > 0 ? 'positive' : 'neutral'}
               valueClassName="text-finance-positive"
               iconClassName="bg-primary/12 text-primary"
-            />
-            <KPICard
-              icon={<TrendingUp className="h-5 w-5" aria-hidden />}
-              label="Net Profit"
-              value={formatInrDisplay(kpis.gross_profit)}
-              hint="Revenue − expenses (period)"
-              trendLabel={profitMarginPct}
-              trendVariant="neutral"
-              valueClassName="text-finance-positive"
-              iconClassName="bg-primary/12 text-primary"
-            />
-            <KPICard
-              icon={<Package2 className="h-5 w-5" aria-hidden />}
-              label="Total Sales"
-              value={String(kpis.sales_count)}
-              hint="Transactions in period"
-              trendLabel={kpis.sales_count > 0 ? '+' + String(Math.min(kpis.sales_count, 99)) : '—'}
-              trendVariant={kpis.sales_count > 0 ? 'positive' : 'neutral'}
-              iconClassName="bg-muted text-muted-foreground"
-            />
-            <KPICard
-              icon={<BarChart3 className="h-5 w-5" aria-hidden />}
-              label="Avg Sale Value"
-              value={formatInrDisplay(kpis.average_sale_value)}
-              hint="Revenue ÷ sales count"
-              trendLabel="Period"
-              trendVariant="muted"
-              iconClassName="bg-muted text-muted-foreground"
             />
             <KPICard
               icon={<CircleDollarSign className="h-5 w-5" aria-hidden />}
@@ -334,13 +203,60 @@ export default function HomePage() {
               valueClassName="text-finance-negative"
               iconClassName="bg-muted text-muted-foreground"
             />
+            <KPICard
+              icon={<TrendingUp className="h-5 w-5" aria-hidden />}
+              label="Profit / Loss"
+              value={formatInrDisplay(kpis.gross_profit)}
+              hint="Revenue − expenses (period)"
+              trendLabel={profitMarginPct}
+              trendVariant="neutral"
+              valueClassName={
+                kpis.gross_profit >= 0 ? 'text-finance-positive' : 'text-finance-negative'
+              }
+              iconClassName="bg-primary/12 text-primary"
+            />
+            <KPICard
+              icon={<Wallet className="h-5 w-5 shrink-0" aria-hidden />}
+              label="Cash in Hand"
+              value={formatInrDisplay(kpis.cash_in_hand_total)}
+              hint="Net cash + net online for the period"
+              trendLabel="Period"
+              trendVariant="muted"
+              iconClassName="bg-muted text-muted-foreground"
+              footer={
+                <div className="space-y-0.5 text-[11px] text-muted-foreground md:text-xs">
+                  <p>
+                    <span className="font-medium text-foreground">Net cash: </span>
+                    {formatInrDisplay(kpis.net_cash)}
+                  </p>
+                  <p>
+                    <span className="font-medium text-foreground">Net online: </span>
+                    {formatInrDisplay(kpis.net_online)}
+                  </p>
+                </div>
+              }
+            />
+            <KPICard
+              icon={<Warehouse className="h-5 w-5 shrink-0" aria-hidden />}
+              label="Inventory Value"
+              value={formatInrDisplay(kpis.inventory_value)}
+              hint="Manual lines: stock × unit cost (current)"
+              trendLabel="Stock"
+              trendVariant="neutral"
+              iconClassName="bg-muted text-muted-foreground"
+            />
+            <KPICard
+              icon={<BarChart3 className="h-5 w-5" aria-hidden />}
+              label="Avg Order Value"
+              value={formatInrDisplay(kpis.average_sale_value)}
+              hint={`Revenue ÷ ${kpis.sales_count} sale(s)`}
+              trendLabel="Period"
+              trendVariant="muted"
+              iconClassName="bg-muted text-muted-foreground"
+            />
           </section>
 
-          <section className="grid gap-3 lg:grid-cols-2 md:gap-4">
-            <PaymentCollectionsCard
-              cashCollected={kpis.cash_collected}
-              onlineCollected={kpis.online_collected}
-            />
+          <section className="grid gap-3 md:gap-4">
             {topProducts ? <SalesByCategoryTable rows={topProducts.sales_by_category} /> : null}
           </section>
 

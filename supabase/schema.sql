@@ -471,7 +471,10 @@ begin
   insert into public.inventory (product_id, business_id, quantity_on_hand)
   values (new.product_id, new.business_id, new.current_stock)
   on conflict (product_id) do update
-  set quantity_on_hand = excluded.quantity_on_hand, updated_at = now();
+  set
+    quantity_on_hand = excluded.quantity_on_hand,
+    updated_at = now()
+  where public.inventory.quantity_on_hand is distinct from excluded.quantity_on_hand;
   return new;
 end;
 $$;
@@ -488,12 +491,61 @@ language plpgsql
 security definer
 set search_path = public
 as $$
+declare
+  v_name text;
+  v_cost numeric(12, 2);
 begin
-  update public.inventory_items ii
-  set current_stock = new.quantity_on_hand, updated_at = now()
-  where ii.business_id = new.business_id
-    and ii.product_id = new.product_id
-    and ii.current_stock is distinct from new.quantity_on_hand;
+  if exists (
+    select 1
+    from public.inventory_items ii
+    where
+      ii.business_id = new.business_id
+      and ii.product_id = new.product_id
+  ) then
+    update public.inventory_items ii
+    set
+      current_stock = new.quantity_on_hand,
+      updated_at = now()
+    where
+      ii.business_id = new.business_id
+      and ii.product_id = new.product_id
+      and ii.current_stock is distinct from new.quantity_on_hand;
+  else
+    select
+      case
+        when coalesce(trim(p.variant), '') = '' then trim(p.name)
+        else trim(p.name) || ' · ' || trim(p.variant)
+      end,
+      coalesce(p.cost_price, 0::numeric)::numeric(12, 2)
+    into v_name, v_cost
+    from public.products p
+    where
+      p.id = new.product_id
+      and p.business_id = new.business_id
+      and p.deleted_at is null;
+
+    if v_name is not null then
+      insert into public.inventory_items (
+        business_id,
+        name,
+        unit,
+        current_stock,
+        unit_cost,
+        reorder_level,
+        product_id
+      )
+      values (
+        new.business_id,
+        v_name,
+        'pcs',
+        new.quantity_on_hand,
+        v_cost,
+        null,
+        new.product_id
+      );
+    end if;
+  end if;
+
   return new;
 end;
 $$;
@@ -548,6 +600,157 @@ $$;
 
 revoke all on function public.inventory_apply_delta(uuid, uuid, numeric) from public;
 
+-- Called from browser after a stock-purchase expense INSERT (insert trigger no longer applies delta).
+create or replace function public.inventory_apply_delta_for_tenant(
+  p_business_id uuid,
+  p_product_id uuid,
+  p_delta numeric
+)
+returns void
+language plpgsql
+security definer
+set search_path = public
+as $$
+begin
+  if p_business_id is distinct from public.current_business_id() then
+    raise exception 'Business mismatch';
+  end if;
+  if p_product_id is null or p_delta is null then
+    raise exception 'product_id and delta required';
+  end if;
+  if p_delta = 0 then
+    return;
+  end if;
+  perform public.inventory_apply_delta(p_business_id, p_product_id, p_delta);
+end;
+$$;
+
+revoke all on function public.inventory_apply_delta_for_tenant(uuid, uuid, numeric) from public;
+grant execute on function public.inventory_apply_delta_for_tenant(uuid, uuid, numeric) to authenticated;
+
+-- Align catalog cost from a stock-purchase expense (called from app after expense insert/update).
+create or replace function public.sync_product_cost_from_expense(
+  p_business_id uuid,
+  p_product_id uuid,
+  p_unit_cost numeric
+)
+returns void
+language plpgsql
+security definer
+set search_path = public
+as $$
+begin
+  update public.products
+    set cost_price = p_unit_cost, updated_at = now()
+    where id = p_product_id and business_id = p_business_id;
+
+  update public.inventory_items
+    set unit_cost = p_unit_cost, updated_at = now()
+    where product_id = p_product_id and business_id = p_business_id;
+end;
+$$;
+
+revoke all on function public.sync_product_cost_from_expense(uuid, uuid, numeric) from public;
+grant execute on function public.sync_product_cost_from_expense(uuid, uuid, numeric) to authenticated;
+
+-- Mirror ledger qty into inventory_items (after stock expense; idempotent if trigger already ran).
+create or replace function public.reconcile_inventory_line_for_product(p_product_id uuid)
+returns void
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_bid uuid;
+  v_qty numeric(12, 3);
+  v_name text;
+  v_cost numeric(12, 2);
+begin
+  v_bid := public.current_business_id();
+  if v_bid is null then
+    raise exception 'No business profile';
+  end if;
+
+  if not exists (
+    select 1
+    from public.products p
+    where
+      p.id = p_product_id
+      and p.business_id = v_bid
+      and p.deleted_at is null
+  ) then
+    raise exception 'Product not found for this business';
+  end if;
+
+  select i.quantity_on_hand
+  into v_qty
+  from public.inventory i
+  where
+    i.product_id = p_product_id
+    and i.business_id = v_bid;
+
+  if not found then
+    return;
+  end if;
+
+  if exists (
+    select 1
+    from public.inventory_items ii
+    where
+      ii.business_id = v_bid
+      and ii.product_id = p_product_id
+  ) then
+    update public.inventory_items ii
+    set
+      current_stock = v_qty,
+      updated_at = now()
+    where
+      ii.business_id = v_bid
+      and ii.product_id = p_product_id
+      and ii.current_stock is distinct from v_qty;
+  else
+    select
+      case
+        when coalesce(trim(p.variant), '') = '' then trim(p.name)
+        else trim(p.name) || ' · ' || trim(p.variant)
+      end,
+      coalesce(p.cost_price, 0::numeric)::numeric(12, 2)
+    into v_name, v_cost
+    from public.products p
+    where
+      p.id = p_product_id
+      and p.business_id = v_bid
+      and p.deleted_at is null;
+
+    if v_name is null then
+      return;
+    end if;
+
+    insert into public.inventory_items (
+      business_id,
+      name,
+      unit,
+      current_stock,
+      unit_cost,
+      reorder_level,
+      product_id
+    )
+    values (
+      v_bid,
+      v_name,
+      'pcs',
+      v_qty,
+      v_cost,
+      null,
+      p_product_id
+    );
+  end if;
+end;
+$$;
+
+revoke all on function public.reconcile_inventory_line_for_product(uuid) from public;
+grant execute on function public.reconcile_inventory_line_for_product(uuid) to authenticated;
+
 -- -----------------------------------------------------------------------------
 -- 5) Expenses (soft delete; no DELETE policy)
 -- -----------------------------------------------------------------------------
@@ -564,10 +767,18 @@ create table if not exists public.expenses (
   total_amount numeric(10, 2) not null check (total_amount >= 0),
   payment_mode text not null check (payment_mode in ('cash', 'online')),
   notes text,
+  update_inventory boolean not null default true,
+  category text,
   deleted_at timestamptz,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
 );
+
+comment on column public.expenses.update_inventory is
+  'When true and product_id is set, expense quantity adjusts inventory via expenses_sync_inventory trigger.';
+
+comment on column public.expenses.category is
+  'Optional label for non-inventory spend (e.g. Marketing, Rent). Null for stock purchases.';
 
 create index if not exists expenses_business_id_idx on public.expenses (business_id);
 create index if not exists expenses_vendor_id_idx on public.expenses (vendor_id);
@@ -614,6 +825,38 @@ create policy "expenses_update"
         and p.business_id = business_id
     )
   );
+
+create or replace function public.expenses_sync_inventory()
+returns trigger
+language plpgsql
+security definer
+set search_path = public
+as $$
+begin
+  if tg_op = 'insert' then
+    return new;
+  elsif tg_op = 'update' then
+    if old.deleted_at is null
+       and old.product_id is not null
+       and coalesce(old.update_inventory, true) then
+      perform public.inventory_apply_delta(old.business_id, old.product_id, -old.quantity);
+    end if;
+    if new.deleted_at is null
+       and new.product_id is not null
+       and coalesce(new.update_inventory, true) then
+      perform public.inventory_apply_delta(new.business_id, new.product_id, new.quantity);
+    end if;
+    return new;
+  end if;
+  return new;
+end;
+$$;
+
+drop trigger if exists expenses_sync_inventory_trigger on public.expenses;
+create trigger expenses_sync_inventory_trigger
+  after insert or update on public.expenses
+  for each row
+  execute function public.expenses_sync_inventory();
 
 -- -----------------------------------------------------------------------------
 -- save_sale RPC (see migration file for full body; duplicated here for greenfield)
@@ -896,8 +1139,9 @@ returns table (
   total_expenses numeric(12, 2),
   inventory_value numeric(12, 2),
   gross_profit numeric(12, 2),
-  cash_collected numeric(12, 2),
-  online_collected numeric(12, 2),
+  net_cash numeric(12, 2),
+  net_online numeric(12, 2),
+  cash_in_hand_total numeric(12, 2),
   sales_count bigint,
   average_sale_value numeric(12, 2)
 )
@@ -930,8 +1174,8 @@ begin
   sales_agg as (
     select
       sum(s.total_amount)::numeric(12, 2) as total_revenue,
-      sum(s.total_amount) filter (where s.payment_mode = 'cash')::numeric(12, 2) as cash_collected,
-      sum(s.total_amount) filter (where s.payment_mode = 'online')::numeric(12, 2) as online_collected,
+      sum(s.total_amount) filter (where s.payment_mode = 'cash')::numeric(12, 2) as cash_sales,
+      sum(s.total_amount) filter (where s.payment_mode = 'online')::numeric(12, 2) as online_sales,
       count(s.id)::bigint as sales_count
     from public.sales s
     where s.business_id = v_bid
@@ -941,7 +1185,9 @@ begin
   ),
   expenses_agg as (
     select
-      sum(e.total_amount)::numeric(12, 2) as total_expenses
+      sum(e.total_amount)::numeric(12, 2) as total_expenses,
+      sum(e.total_amount) filter (where e.payment_mode = 'cash')::numeric(12, 2) as cash_expenses,
+      sum(e.total_amount) filter (where e.payment_mode = 'online')::numeric(12, 2) as online_expenses
     from public.expenses e
     where e.business_id = v_bid
       and e.deleted_at is null
@@ -951,25 +1197,23 @@ begin
   inv_val as (
     select
       coalesce(
-        sum(
-          round((i.quantity_on_hand * p.cost_price)::numeric, 2)
-        ),
+        sum(round((ii.current_stock * ii.unit_cost)::numeric, 2)),
         0
       )::numeric(12, 2) as inventory_value
-    from public.inventory i
-    join public.products p
-      on p.id = i.product_id
-    where i.business_id = v_bid
-      and p.business_id = v_bid
-      and p.deleted_at is null
+    from public.inventory_items ii
+    where ii.business_id = v_bid
   )
   select
     coalesce(sa.total_revenue, 0)::numeric(12, 2) as total_revenue,
     coalesce(ea.total_expenses, 0)::numeric(12, 2) as total_expenses,
     coalesce(iv.inventory_value, 0)::numeric(12, 2) as inventory_value,
     (coalesce(sa.total_revenue, 0) - coalesce(ea.total_expenses, 0))::numeric(12, 2) as gross_profit,
-    coalesce(sa.cash_collected, 0)::numeric(12, 2) as cash_collected,
-    coalesce(sa.online_collected, 0)::numeric(12, 2) as online_collected,
+    (coalesce(sa.cash_sales, 0) - coalesce(ea.cash_expenses, 0))::numeric(12, 2) as net_cash,
+    (coalesce(sa.online_sales, 0) - coalesce(ea.online_expenses, 0))::numeric(12, 2) as net_online,
+    (
+      (coalesce(sa.cash_sales, 0) - coalesce(ea.cash_expenses, 0))
+      + (coalesce(sa.online_sales, 0) - coalesce(ea.online_expenses, 0))
+    )::numeric(12, 2) as cash_in_hand_total,
     coalesce(sa.sales_count, 0)::bigint as sales_count,
     case
       when coalesce(sa.sales_count, 0) = 0 then 0::numeric(12, 2)

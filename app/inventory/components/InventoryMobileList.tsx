@@ -19,13 +19,15 @@ type Props = {
   products: Product[];
   /** Opens the inventory dialog (link product, stub, stock, cost). */
   onEdit: (row: InventoryItem) => void;
+  /** When true, zero on-hand rows use a muted / warning surface (toggle “Show zero stock”). */
+  dimZeroStock?: boolean;
 };
 
 /**
  * Collapsed: catalog name · variant · category when linked; otherwise line name · — · — plus “Add to catalog”.
  * Expanded: stock, costs, unit, reorder, line name.
  */
-export function InventoryMobileList({ rows, products, onEdit }: Props) {
+export function InventoryMobileList({ rows, products, onEdit, dimZeroStock }: Props) {
   const [openId, setOpenId] = useState<string | null>(null);
   const productById = useMemo(() => new Map(products.map((p) => [p.id, p])), [products]);
 
@@ -37,14 +39,17 @@ export function InventoryMobileList({ rows, products, onEdit }: Props) {
         const low = isLowStock(r);
         const val = Number(r.current_stock) * Number(r.unit_cost);
         const linked = r.product_id ? productById.get(r.product_id) : null;
+        const zeroShown = dimZeroStock && Number(r.current_stock) <= 0;
 
         return (
           <div
             key={r.id}
             className={
-              low
-                ? 'overflow-hidden rounded-lg border border-amber-200/80 bg-amber-50/90 text-xs shadow-sm dark:border-amber-900/50 dark:bg-amber-950/30'
-                : 'overflow-hidden rounded-lg border border-border/60 bg-card text-xs shadow-sm'
+              zeroShown
+                ? 'overflow-hidden rounded-lg border border-destructive/25 bg-destructive/5 text-xs text-muted-foreground shadow-sm dark:bg-destructive/10'
+                : low
+                  ? 'overflow-hidden rounded-lg border border-amber-200/80 bg-amber-50/90 text-xs shadow-sm dark:border-amber-900/50 dark:bg-amber-950/30'
+                  : 'overflow-hidden rounded-lg border border-border/60 bg-card text-xs shadow-sm'
             }
           >
             <div className="flex min-h-11 items-stretch gap-1">

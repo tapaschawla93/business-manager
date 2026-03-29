@@ -65,6 +65,11 @@ export function ExpenseMobileList({ expenses, onEdit, onArchive }: Props) {
                 <span className="shrink-0 font-bold tabular-nums text-foreground">
                   {formatInrDisplay(Number(row.total_amount))}
                 </span>
+                {row.update_inventory === true ? (
+                  <Badge variant="secondary" className="ml-1 shrink-0 px-1.5 py-0 text-[10px] font-bold uppercase">
+                    Stock
+                  </Badge>
+                ) : null}
                 <MobileAccordionChevron open={open} className="h-4 w-4 shrink-0" />
               </button>
               <div className="flex shrink-0 flex-row items-center gap-0 border-l border-border/40 px-0.5">
@@ -101,6 +106,10 @@ export function ExpenseMobileList({ expenses, onEdit, onArchive }: Props) {
                 <div>
                   <p className="text-[11px] font-medium text-muted-foreground">Vendor</p>
                   <p className="font-medium text-foreground">{row.vendor_name}</p>
+                </div>
+                <div>
+                  <p className="text-[11px] font-medium text-muted-foreground">Category</p>
+                  <p className="font-medium text-foreground">{row.category?.trim() ? row.category : '—'}</p>
                 </div>
                 <div>
                   <p className="text-[11px] font-medium text-muted-foreground">Payment</p>

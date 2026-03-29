@@ -115,7 +115,17 @@ export default function ExpensesPage() {
   }
 
   function downloadExpensesTemplate() {
-    const headers = ['date', 'vendor_name', 'item_description', 'quantity', 'unit_cost', 'total_amount', 'payment_mode', 'notes'];
+    const headers = [
+      'date',
+      'vendor_name',
+      'item_description',
+      'quantity',
+      'unit_cost',
+      'total_amount',
+      'payment_mode',
+      'notes',
+      'category',
+    ];
     const rows = [
       {
         date: '2026-03-27',
@@ -126,6 +136,7 @@ export default function ExpensesPage() {
         total_amount: '250',
         payment_mode: 'cash',
         notes: '',
+        category: '',
       },
     ];
     downloadCsv('template_expenses.csv', rowsToCsv(headers, rows));
@@ -170,6 +181,9 @@ export default function ExpensesPage() {
             total_amount: totalRaw ?? qty * unitCost,
             payment_mode: mode,
             notes: getString(r, 'notes') || null,
+            product_id: null,
+            update_inventory: false,
+            category: getString(r, 'category').trim() || null,
           },
         });
       }
@@ -217,7 +231,7 @@ export default function ExpensesPage() {
     <div className="space-y-8">
       <PageHeader
         title="Expenses"
-        description="Manage purchases and operating costs. Total is quantity × unit cost."
+        description="Operating costs and stock purchases. Use Stock Purchase when buying inventory (updates catalog cost and stock). Otherwise use a single amount and optional category."
         actions={
           <>
             <Button type="button" variant="outline" className="h-11 gap-2 rounded-xl" onClick={downloadExpensesTemplate}>

@@ -6,13 +6,22 @@ All notable changes to this project are documented here. Format loosely follows 
 
 ### Added
 
+- **Dashboard v2.1:** **`get_dashboard_kpis`** return shape — **`net_cash`**, **`net_online`**, **`cash_in_hand_total`** (period sales minus expenses by payment mode); **`inventory_value`** from **`inventory_items`** (current_stock × unit_cost). Migrations **`20260331130000_expenses_update_inventory_flag.sql`** (`expenses.update_inventory` + guarded **`expenses_sync_inventory`**) and **`20260331140000_dashboard_kpis_net_cash_inventory_items.sql`**; **`supabase/schema.sql`** aligned.
+- **Dependencies:** **`react-day-picker`**, **`date-fns`**, **`@radix-ui/react-switch`**.
+- **UI:** **`DashboardDateRangeControl`** + **`DashboardDateRangePicker`** (range calendar; **Sheet** on small screens, **Dialog** on **`md+`**); **`components/ui/switch.tsx`**. Home dashboard KPI order + **Cash in Hand** card (sub-lines for net cash / net online); **`PaymentCollectionsCard`** removed from **`/`**. Sidebar shows **business name** under BizManager (**`AppShell`**, `profiles` → **`businesses(name)`** embed).
+- **Inventory:** **Show zero stock** toggle; muted styling for zero on-hand rows when the toggle is on (`InventoryMobileList` **`dimZeroStock`**).
+- **Expenses:** optional **catalog product** link + **Add to inventory** switch (**`ExpenseForm`**); persists **`product_id`** and **`update_inventory`** (bulk CSV unchanged — DB default **`true`**).
+- **`lib/products/productMargin.ts`:** shared catalog **margin %** (MRP vs cost + tone classes) for **Products** table + **`ProductsMobileList`**.
+- **`components/mobile/MobileAccordion.tsx`:** `MobileAccordionChevron`, `MobileAccordionBody` (`contentId` → `id` + `role="region"`, `aria-controls` on row toggles).
+- **`SaleListLineDetail.id`:** `fetchSalesList` selects **`sale_items.id`**; mobile line blocks use stable React keys.
+- **Docs:** `docs/knowledgebase.md` — **Mobile polish** module (accordion/`md` split, keys, `productById` map, margin helper, a11y pattern); **client loader error UX** (toast + `cancelled` + `devError` for Supabase reference fetches).
 - **Manual inventory (`inventory_items`):** `/inventory` page (list, edit dialog, product link, low-stock row tint, CSV template + bulk import, unlinked-save **AlertDialog**). Ledger **`public.inventory`** (`quantity_on_hand`); linked lines sync via DB triggers. Settings: inventory CSV template + upload. Nav **Inventory** last (`lib/nav.ts`, `Sidebar.tsx`). Migrations `20260328120000_inventory_items.sql`, `20260329103000_save_sale_restore_inventory_delta.sql`, `20260329120000_inventory_sync_triggers_security_definer.sql`; greenfield **`supabase/schema.sql`** §4c + **`inventory_apply_delta`** + **`save_sale`** stock step.
 - **`npm run dev:clean`:** `rm -rf .next && next dev` (fixes corrupt dev cache / missing chunk / “unstyled” UI when CSS 500s).
 - **`lib/productLookupMap.ts`:** name / `name::variant` index; **ambiguous** duplicate catalog keys → failed CSV row (inventory + sales Settings bulk + sales page import).
 - **`lib/inventory/importInventoryCsv.ts`**, **`stubProduct.ts`**, **`lib/types/inventoryItem.ts`**; **`importCsv`:** `getAddToProductsFlag` (accepts `add_to_section` header alias).
 - **`lib/devLog.ts`:** `devError` — logs import failures in **development** only (alongside toasts).
 - **`lib/queries/inventoryItems.ts`:** explicit `inventory_items` column list + row mapper (not `select('*')`).
-- **UI Overhaul (V1):** shadcn-style components under `components/ui/` (Button, Card, Input, Table, Dialog, Sheet, Popover, Command, AlertDialog, Sonner, etc.), **`#16a34a`** primary tokens in `globals.css`, **`AppChrome` / `AppShell`** with **240px sidebar** (desktop) and **mobile menu FAB + slide-over nav** (post–bottom-bar era), **`Fab`** on Products + Expenses. **BizManager** branding in sidebar. **Sonner** toasts; archive confirmations via **Dialog/AlertDialog** (replaces `window.confirm`). Login remains **minimal centered card** (no shell). Sales **product search** uses **Popover + cmdk** (same client product list as before).
+- **UI Overhaul (V1):** shadcn-style components under `components/ui/` (Button, Card, Input, Table, Dialog, Sheet, Popover, Command, AlertDialog, Sonner, etc.), **`#16a34a`** primary tokens in `globals.css`, **`AppChrome` / `AppShell`** with **240px sidebar** (desktop) and **mobile menu FAB + slide-over nav** (post–bottom-bar era). **BizManager** branding in sidebar. **Sonner** toasts; archive confirmations via **Dialog/AlertDialog** (replaces `window.confirm`). Login remains **minimal centered card** (no shell). Sales **product search** uses **Popover + cmdk** (same client product list as before).
 - Added `components/layout/Sidebar.tsx` (standalone desktop sidebar component): fixed 240px rail, nav icons, active-state styling, user badge, and logout action. Not wired by default.
 - **Bulk upload hub (Settings):** Added CSV template download + CSV upload for **Products**, **Expenses**, and **Sales** (`sale_ref` grouped line-item format). Imports support partial success and downloadable error CSV reports.
 - Added shared CSV import helpers in `lib/importCsv.ts` (parse, typed getters, error report CSV builder).
@@ -33,8 +42,11 @@ All notable changes to this project are documented here. Format loosely follows 
 
 ### Changed
 
+- **Breaking (Supabase + client):** **`get_dashboard_kpis`** no longer returns **`cash_collected`** / **`online_collected`** — apply **`20260331140000_dashboard_kpis_net_cash_inventory_items.sql`** and update **`lib/queries/dashboard.ts`** / home page together.
+- **Mobile polish — lists:** below **`md`**, accordion mobile lists for **Expenses** (`ExpenseMobileList` + `ExpenseList` split), **Products** (`ProductsMobileList`), **Inventory** (`InventoryMobileList`, `productById` map, linked vs unlinked summary + **Add to catalog**), **Vendors** (`VendorsMobileList`); **`text-xs`**-aligned row chrome + compact single-line rows (expenses/sales headers). Desktop tables unchanged (`hidden md:block`).
+- **Dashboard** (`/`): tighter KPI/card/table padding + type below **`md`** (`KPICard`, payment collections, category + top-products tables, date-range bar on `app/page.tsx`).
 - **Sales (`/sales`):** below **`md`**, **accordion** list replaces wide table (`SalesMobileList`); **`fetchSalesList`** returns **`lines`** + **`total_profit` / `total_cost`**. Desktop table unchanged (`prd.v2.mobile-polish`).
-- **Mobile shell:** **`MobileBottomNav`** removed; **`AppShell`** uses **menu FAB** + **`Sheet`** from left (`prd.v2.mobile-polish`). Module **FAB**s offset above menu FAB via **`globals.css`** tokens.
+- **Mobile shell:** **`MobileBottomNav`** removed; **`AppShell`** uses **menu FAB** + **`Sheet`** from left (`prd.v2.mobile-polish`). Per-page **Add** FABs removed from Products/Expenses/Sales (nav menu FAB only); **`globals.css`** keeps **`--page-fab-bottom-mobile`** if a stacked page FAB returns later.
 - **Home** (`app/page.tsx`): dashboard v2 UI + **`useBusinessSession`** (same as shell routes); **`withTimeout`** on KPI fetch; **load gen ref** ignores stale RPC after range change; session vs data skeleton copy.
 - **Breaking (Supabase):** zero-arg **`get_dashboard_kpis`** / **`get_top_products`** removed — apply **`20260330140000_dashboard_v2_date_range.sql`** before/with this client.
 - Login: sign-in / sign-up aligned with onboarding RPC; email-confirmation path documented in UI.
@@ -49,8 +61,16 @@ All notable changes to this project are documented here. Format loosely follows 
 - **DB migration:** `20260327200000_vendors_contact_address.sql` — baseline `CREATE TABLE IF NOT EXISTS public.vendors` + `ADD COLUMN` for PRD fields + `expenses.vendor_id` / `product_id` + `expenses_validate_refs` when `vendors` or FK columns were missing (safe if `20260326120000_inventory_vendors.sql` never ran).
 - **Sales / Settings bulk CSV:** sales import uses `try`/`finally` + shared lookup map (same semantics as inventory CSV).
 
+### Removed
+
+- **Per-page floating add FAB** from **Products**, **Expenses**, **Sales** (header buttons only). **`components/Fab.tsx`** remains, unused.
+
 ### Fixed
 
+- **ExpenseForm:** failed **vendors** / **products** Supabase loads show **`toast.error`** (not silent empty pickers).
+- **AppShell:** failed **profile → business name** embed shows **`toast.error`**; **`devError`** in development. **`cancelled`** checked before toast (no post-unmount noise).
+
+- **Mobile lists:** **Expense** accordion rows missing React **`key`**; **sale** line items use **`sale_items.id`** keys (not index).
 - **Sales → stock:** `save_sale` calls **`inventory_apply_delta`** again (v1 wrap-up had dropped it). Deploy **`20260329103000_save_sale_restore_inventory_delta.sql`** on Supabase.
 - **Ledger ↔ lines sync:** **`inventory_pull_to_items`** / **`inventory_items_push_to_ledger`** are **`SECURITY DEFINER`** so RLS does not block sync after `save_sale`. Deploy **`20260329120000_inventory_sync_triggers_security_definer.sql`** after the `save_sale` migration.
 - **Inventory page:** tab **visibility** refetch; CSV import **`try`/`catch`/`finally`**; profile bootstrap **`useEffect`** uses **mounted** guard (no post-unmount `setState`).

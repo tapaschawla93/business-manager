@@ -5,7 +5,9 @@ import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
 import { useEffect, useState } from 'react';
 import { LogOut, Menu, TrendingUp, X } from 'lucide-react';
+import { toast } from 'sonner';
 import { getSupabaseClient } from '@/lib/supabaseClient';
+import { devError } from '@/lib/devLog';
 import { MAIN_NAV_ITEMS, isMainNavActive } from '@/lib/nav';
 import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
@@ -54,6 +56,7 @@ export function AppShell({ children }: { children: ReactNode }) {
   const pathname = usePathname();
   const router = useRouter();
   const [email, setEmail] = useState<string | null>(null);
+  const [businessName, setBusinessName] = useState<string | null>(null);
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
 
   useEffect(() => {
@@ -67,6 +70,40 @@ export function AppShell({ children }: { children: ReactNode }) {
       setEmail(session?.user?.email ?? null);
     });
     return () => subscription.unsubscribe();
+  }, []);
+
+  /** One embed query: current profile row + linked business name for the sidebar header. */
+  useEffect(() => {
+    const supabase = getSupabaseClient();
+    let cancelled = false;
+    void (async () => {
+      const { data: userData } = await supabase.auth.getUser();
+      const user = userData.user;
+      if (!user || cancelled) return;
+      const { data, error } = await supabase
+        .from('profiles')
+        .select('businesses(name)')
+        .eq('id', user.id)
+        .maybeSingle();
+      if (cancelled) return;
+      if (error) {
+        devError('AppShell business name', error);
+        toast.error(error.message || 'Could not load business name');
+        return;
+      }
+      const row = data as { businesses?: { name: string } | { name: string }[] | null } | null;
+      const embedded = row?.businesses;
+      const name =
+        embedded && !Array.isArray(embedded) && typeof embedded.name === 'string'
+          ? embedded.name
+          : Array.isArray(embedded) && embedded[0] && typeof embedded[0].name === 'string'
+            ? embedded[0].name
+            : null;
+      setBusinessName(name);
+    })();
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   async function handleSignOut() {
@@ -92,10 +129,17 @@ export function AppShell({ children }: { children: ReactNode }) {
         aria-label="Sidebar"
       >
         <div className="flex items-center gap-3 px-6 py-6">
-          <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-primary text-primary-foreground shadow-sm shadow-primary/25">
+          <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-primary text-primary-foreground shadow-sm shadow-primary/25">
             <TrendingUp className="h-5 w-5" aria-hidden strokeWidth={2.5} />
           </div>
-          <span className="text-lg font-bold tracking-tight text-foreground">BizManager</span>
+          <div className="min-w-0">
+            <span className="block text-lg font-bold tracking-tight text-foreground">BizManager</span>
+            {businessName ? (
+              <span className="mt-0.5 block truncate text-xs font-semibold text-muted-foreground" title={businessName}>
+                {businessName}
+              </span>
+            ) : null}
+          </div>
         </div>
 
         <nav className="flex flex-1 flex-col gap-1 px-4" aria-label="Main">
@@ -161,10 +205,17 @@ export function AppShell({ children }: { children: ReactNode }) {
             <SheetTitle>Main menu</SheetTitle>
           </SheetHeader>
           <div className="flex items-center gap-3 border-b border-border/70 px-5 py-5">
-            <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-primary text-primary-foreground shadow-sm shadow-primary/25">
+            <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-primary text-primary-foreground shadow-sm shadow-primary/25">
               <TrendingUp className="h-5 w-5" aria-hidden strokeWidth={2.5} />
             </div>
-            <span className="text-lg font-bold tracking-tight text-foreground">BizManager</span>
+            <div className="min-w-0">
+              <span className="block text-lg font-bold tracking-tight text-foreground">BizManager</span>
+              {businessName ? (
+                <span className="mt-0.5 block truncate text-xs font-semibold text-muted-foreground" title={businessName}>
+                  {businessName}
+                </span>
+              ) : null}
+            </div>
           </div>
           <nav className="flex flex-1 flex-col gap-1 overflow-y-auto px-4 py-4" aria-label="Main">
             <ShellNavLinks pathname={pathname} onNavigate={() => setMobileNavOpen(false)} />

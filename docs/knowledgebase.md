@@ -340,3 +340,58 @@
 #### Level 2
 
 - **`devError`** (**`lib/devLog.ts`**) logs **`catch`** details **only in development** so PMs/devs see stack traces without shipping **`console`** noise to production users who already get toasts.
+
+---
+
+## Mobile polish — accordion lists, a11y, and client patterns (prd.v2.mobile-polish)
+
+### Level 1 — Core concept
+
+- **What**: Below **`md`**, several modules render **`…MobileList`** accordions instead of (or beside) wide **`<Table>`**s: **Sales**, **Expenses**, **Products**, **Inventory**, **Vendors**. Each row shows a **summary**; tap toggles **details** (and keeps **edit / archive / link** on the summary where possible).
+- **Why**: Avoid horizontal scroll and tiny table cells on phones; match how operators scan **one entity at a time**.
+- **When**: Any multi-column list where **mobile reading order** differs from desktop columns (this codebase: `md:hidden` / `hidden md:block` splits on pages).
+- **Fit**: Shared primitives in **`components/mobile/MobileAccordion.tsx`** (`MobileAccordionChevron`, `MobileAccordionBody`); dashboard home uses **responsive padding/type** on **`app/page.tsx`** + **`components/dashboard/*`** (same “slightly smaller on mobile” product goal, no accordion).
+
+### Level 2 — Mechanics, tradeoffs, debugging
+
+- **State**: Typically **`useState<string | null>(null)`** for **`openId`** — **one open row** per list, predictable UX and minimal re-renders.
+- **Animation**: **`MobileAccordionBody`** uses **`grid-template-rows: 0fr` ↔ `1fr`** with **`motion-reduce:transition-none`** so **prefers-reduced-motion** users are not forced through long transitions.
+- **React keys**: Every **`.map()`** row needs a **stable `key`** (e.g. **`expense.id`**, **`product.id`**). **`SalesMobileList`** line blocks key off **`sale_items.id`** (exposed as **`SaleListLineDetail.id`** in **`lib/queries/salesList.ts`**) — **not** array index — so refetches/reorders don’t reuse the wrong row subtree.
+- **Lookups**: **`InventoryMobileList`** uses **`useMemo(() => new Map(products.map(…)), [products])`** instead of **`products.find`** per row — **O(1)** per link vs **O(n×m)** when catalogs grow.
+- **DRY**: **Catalog margin %** (MRP vs cost, tone classes) lives in **`lib/products/productMargin.ts`** (`getProductMargin`, `productMarginToneClass`) for **`ProductsMobileList`** and **`app/products/page.tsx`** table rows.
+- **Tradeoffs**: Dense single-line summaries rely on **`truncate` / `line-clamp`** — long labels need expand or drill-down (e.g. vendor **`<Link>`** with **`stopPropagation`** so navigation doesn’t toggle the accordion).
+- **Debug**: Wrong row “stuck” open → check **missing `key`** or **parent remount**; inventory shows wrong link → **`product_id` present but product missing from client `products` array** (treat as unlinked in UI until data is consistent).
+
+### Level 3 — Production behavior, a11y, scaling
+
+- **Accessibility**: Row **`button`**s set **`aria-expanded`**; optional **`contentId`** on **`MobileAccordionBody`** sets **`id` + `role="region"`** on the panel; the toggle sets **`aria-controls={contentId}`**. The animated wrapper uses **`aria-hidden={!open}`** so collapsed content is de-emphasized for SR while remaining in the DOM for the height animation.
+- **Sales vs others**: **`SalesMobileList`** still owns its **expand grid** markup (historical / layout reasons); other lists use **`MobileAccordionBody`** — same pattern, two implementations; merging would reduce duplication but is a deliberate refactor.
+- **Performance**: All lists are **plain maps** over arrays — fine at V1 volumes; **very large** lists may need **pagination** or **virtualisation** later.
+- **Contract changes**: Adding **`id`** to **`fetchSalesList`** line payloads is a **typed contract** — any test or story that builds **`SaleListLineDetail`** must supply **`id`**.
+- **Senior lens**: **`md`** is a **product breakpoint** (shell + list mode), not an ad-hoc class — changing it ripples across **every** table/mobile split. Keep **server truth** (RLS, IDs) authoritative; mobile components stay **presentational**.
+
+---
+
+## Client loaders — Supabase errors vs silent empty UI
+
+### Level 1 — Core concept
+
+- **What**: When a client component **fetches reference data** (vendors, products, profile embeds) and the query returns **`error`**, the UI should **not** behave like “there’s nothing to pick”—that misreads **RLS**, network, or schema issues as empty catalogs.
+- **Why**: Operators need a **signal** that loading failed; otherwise they waste time creating duplicates or assume the product is “broken.”
+- **When**: Any **`useEffect`** / callback that **`await`s** Supabase and sets list state—e.g. **`ExpenseForm`** (`loadVendors`, `loadProducts`), **`AppShell`** (sidebar **business name** from **`profiles` → `businesses(name)`**).
+- **Fit**: **Sonner** **`toast.error(message)`** matches save/archive flows; optional **`devError`** from **`lib/devLog.ts`** adds **dev-only** console detail without shipping noise to end users.
+
+### Level 2 — How it works
+
+- **Mechanics**: On **`PostgrestError`** (or query helper error), call **`toast.error(err.message || '…fallback…')`** and **return** before **`setState`** with stale/empty assumptions. Keep **user-facing** copy short; Supabase often surfaces useful **`message`** (permission, missing column, etc.).
+- **Cancelled async**: In **`useEffect`** with a **`cancelled`** flag, **check `cancelled` before toasting** so unmount / Strict Mode does not fire toasts for abandoned requests. Split **`if (cancelled || error) return`** into **`if (cancelled) return`** then **`if (error) { … toast … return }`**.
+- **Tradeoffs**: A toast on **every** failed mount can feel noisy if something is **persistently** misconfigured—still better than silent failure; a follow-up is **inline retry** or **deduped** error state if needed.
+- **Edge cases**: **`error` null** but **`data` unexpected** is a different bug (parsing/validation); **`maybeSingle()`** wrong-shape rows may not set **`error`**—handle with defensive parsing + optional “could not read business” messaging later if observed.
+- **Debug**: Reproduce with **wrong RLS** or **offline**; confirm toast + (in dev) **`devError`** context string (e.g. **`AppShell business name`**).
+
+### Level 3 — Deep dive
+
+- **Production**: **`devError`** is **`NODE_ENV === 'development'`** only—production users rely on **toast** (and whatever logging you add server-side separately).
+- **Performance**: One extra **`toast.error`** per failed request is negligible; avoid **awaiting** loaders in a tight loop without batching.
+- **Alternatives**: **Inline `Alert`** or form-level **`error` state** instead of toast—good when the failure is **scoped to one form**; **global** shell fetches often still use toast because there’s no single field to attach to.
+- **Senior lens**: Treat **“empty picker after load”** as a **product smell** unless you’ve explicitly distinguished **empty catalog** (zero rows, no error) from **failed load**—always branch on **`error`** first, then render empty state.

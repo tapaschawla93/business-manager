@@ -18,14 +18,16 @@ export function defaultDashboardYtdRange(): DashboardDateRange {
 export type DashboardKPIs = {
   total_revenue: number;
   total_expenses: number;
-  /** Current stock × catalog cost (point-in-time; not filtered by dashboard range). */
+  /** Sum of `inventory_items.current_stock × unit_cost` for the tenant (point-in-time; not range-filtered). */
   inventory_value: number;
   /** Revenue − expenses in the selected period. */
   gross_profit: number;
-  /** Sale totals with `payment_mode = 'cash'` in range. */
-  cash_collected: number;
-  /** Sale totals with `payment_mode = 'online'` in range. */
-  online_collected: number;
+  /** Cash sales − cash expenses in range. */
+  net_cash: number;
+  /** Online sales − online expenses in range. */
+  net_online: number;
+  /** net_cash + net_online for the period. */
+  cash_in_hand_total: number;
   sales_count: number;
   average_sale_value: number;
 };
@@ -169,8 +171,9 @@ export async function getDashboardKPIs(
   const total_expenses = asFiniteNumber(r.total_expenses);
   const inventory_value = asFiniteNumber(r.inventory_value) ?? 0;
   const gross_profit = asFiniteNumber(r.gross_profit);
-  const cash_collected = asFiniteNumber(r.cash_collected);
-  const online_collected = asFiniteNumber(r.online_collected);
+  const net_cash = asFiniteNumber(r.net_cash);
+  const net_online = asFiniteNumber(r.net_online);
+  const cash_in_hand_total = asFiniteNumber(r.cash_in_hand_total);
   const average_sale_value = asFiniteNumber(r.average_sale_value);
   const sales_count = asFiniteNumber(r.sales_count);
 
@@ -178,8 +181,9 @@ export async function getDashboardKPIs(
     total_revenue === null ||
     total_expenses === null ||
     gross_profit === null ||
-    cash_collected === null ||
-    online_collected === null ||
+    net_cash === null ||
+    net_online === null ||
+    cash_in_hand_total === null ||
     average_sale_value === null ||
     sales_count === null
   ) {
@@ -197,8 +201,9 @@ export async function getDashboardKPIs(
       total_expenses,
       inventory_value,
       gross_profit,
-      cash_collected,
-      online_collected,
+      net_cash,
+      net_online,
+      cash_in_hand_total,
       sales_count,
       average_sale_value,
     },

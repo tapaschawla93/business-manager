@@ -6,7 +6,6 @@ import { Download, Pencil, Plus, RefreshCw, Search, Upload, Warehouse } from 'lu
 import { downloadCsv, rowsToCsv } from '@/lib/exportCsv';
 import { parseCsv } from '@/lib/importCsv';
 import { importInventoryCsvRows, inventoryImportIssuesCsv } from '@/lib/inventory/importInventoryCsv';
-import { insertStubProductForInventory } from '@/lib/inventory/stubProduct';
 import { devError } from '@/lib/devLog';
 import { getSupabaseClient } from '@/lib/supabaseClient';
 import { fetchInventoryItems } from '@/lib/queries/inventoryItems';
@@ -20,6 +19,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Badge } from '@/components/ui/badge';
 import { Card, CardContent, CardHeader } from '@/components/ui/card';
+import { Switch } from '@/components/ui/switch';
 import {
   Dialog,
   DialogContent,
@@ -27,15 +27,6 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
-import {
-  AlertDialog,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-} from '@/components/ui/alert-dialog';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Skeleton } from '@/components/ui/skeleton';
 import { SessionRedirectNotice } from '@/components/SessionRedirectNotice';
@@ -48,6 +39,10 @@ function isLowStock(row: InventoryItem): boolean {
   return Number(row.current_stock) <= Number(row.reorder_level);
 }
 
+function productLineName(p: Product): string {
+  return `${p.name}${p.variant ? ` · ${p.variant}` : ''}`;
+}
+
 export default function InventoryPage() {
   const session = useBusinessSession({ onMissingBusiness: 'error' });
   const businessId = session.kind === 'ready' ? session.businessId : null;
@@ -58,20 +53,18 @@ export default function InventoryPage() {
   const [importing, setImporting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
+  const [showZeroStock, setShowZeroStock] = useState(false);
 
   const [dialogOpen, setDialogOpen] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
-  const [formName, setFormName] = useState('');
-  const [formUnit, setFormUnit] = useState('pcs');
   const [formStock, setFormStock] = useState('');
   const [formCost, setFormCost] = useState('');
   const [formReorder, setFormReorder] = useState('');
   const [formProductId, setFormProductId] = useState<string | null>(null);
   const [pickerLabel, setPickerLabel] = useState<string | undefined>(undefined);
   const [saving, setSaving] = useState(false);
-
-  /** Deferred save when user must choose stub vs unlinked. */
-  const [linkChoiceOpen, setLinkChoiceOpen] = useState(false);
+  /** For edit: prior unit cost — RPC sync only when cost changes (add always syncs when linked). */
+  const [baselineUnitCost, setBaselineUnitCost] = useState<number | null>(null);
 
   const load = useCallback(async () => {
     if (!businessId) return;
@@ -111,7 +104,7 @@ export default function InventoryPage() {
     return () => document.removeEventListener('visibilitychange', onVisible);
   }, [businessId, load]);
 
-  const filtered = useMemo(() => {
+  const searchFiltered = useMemo(() => {
     const q = searchQuery.trim().toLowerCase();
     if (!q) return rows;
     return rows.filter((r) => {
@@ -119,6 +112,16 @@ export default function InventoryPage() {
       return hit(r.name) || hit(r.unit);
     });
   }, [rows, searchQuery]);
+
+  const visibleRows = useMemo(() => {
+    if (showZeroStock) return searchFiltered;
+    return searchFiltered.filter((r) => Number(r.current_stock) > 0);
+  }, [searchFiltered, showZeroStock]);
+
+  const duplicateProductForAdd = useMemo(() => {
+    if (editingId || !formProductId) return false;
+    return rows.some((r) => r.product_id === formProductId);
+  }, [editingId, formProductId, rows]);
 
   const totalValue = useMemo(
     () => rows.reduce((s, r) => s + Number(r.current_stock) * Number(r.unit_cost), 0),
@@ -128,13 +131,12 @@ export default function InventoryPage() {
 
   function resetForm() {
     setEditingId(null);
-    setFormName('');
-    setFormUnit('pcs');
     setFormStock('');
     setFormCost('');
     setFormReorder('');
     setFormProductId(null);
     setPickerLabel(undefined);
+    setBaselineUnitCost(null);
   }
 
   function openAdd() {
@@ -144,15 +146,14 @@ export default function InventoryPage() {
 
   function startEdit(row: InventoryItem) {
     setEditingId(row.id);
-    setFormName(row.name);
-    setFormUnit(row.unit || 'pcs');
     setFormStock(String(row.current_stock));
     setFormCost(String(row.unit_cost));
     setFormReorder(row.reorder_level != null ? String(row.reorder_level) : '');
     setFormProductId(row.product_id);
+    setBaselineUnitCost(Number(row.unit_cost));
     if (row.product_id) {
       const p = products.find((x) => x.id === row.product_id);
-      setPickerLabel(p ? `${p.name}${p.variant ? ` · ${p.variant}` : ''}` : undefined);
+      setPickerLabel(p ? productLineName(p) : undefined);
     } else {
       setPickerLabel(undefined);
     }
@@ -214,21 +215,29 @@ export default function InventoryPage() {
     }
   }
 
-  async function persistItem(productId: string | null) {
+  async function maybeSyncCostFromInventorySave(productId: string, unitCost: number) {
+    const shouldSync =
+      baselineUnitCost === null || Math.round(unitCost * 100) !== Math.round(baselineUnitCost * 100);
+    if (!shouldSync) return;
+    const supabase = getSupabaseClient();
+    const { error: rpcErr } = await supabase.rpc('sync_product_cost_from_expense', {
+      p_business_id: businessId,
+      p_product_id: productId,
+      p_unit_cost: unitCost,
+    });
+    if (rpcErr) {
+      toast.error(rpcErr.message || 'Could not sync catalog unit cost');
+    }
+  }
+
+  async function submitInventoryForm(e: FormEvent) {
+    e.preventDefault();
     if (!businessId) return;
-    const stock = Number(formStock);
+
     const cost = Number(formCost);
     const reorderRaw = formReorder.trim();
     const reorder = reorderRaw === '' ? null : Number(reorderRaw);
 
-    if (!formName.trim()) {
-      toast.error('Name is required');
-      return;
-    }
-    if (!Number.isFinite(stock) || stock < 0) {
-      toast.error('Current stock must be a number ≥ 0');
-      return;
-    }
     if (!Number.isFinite(cost) || cost < 0) {
       toast.error('Unit cost must be a number ≥ 0');
       return;
@@ -240,16 +249,79 @@ export default function InventoryPage() {
 
     const supabase = getSupabaseClient();
     setSaving(true);
-    const payload = {
-      name: formName.trim(),
-      unit: formUnit.trim() || 'pcs',
-      current_stock: stock,
-      unit_cost: cost,
-      reorder_level: reorder,
-      product_id: productId,
-    };
 
-    if (editingId) {
+    if (!editingId) {
+      if (!formProductId) {
+        setSaving(false);
+        toast.error('Select a catalog product');
+        return;
+      }
+      if (rows.some((r) => r.product_id === formProductId)) {
+        setSaving(false);
+        toast.error('This product already has an inventory row');
+        return;
+      }
+      const delta = Number(formStock);
+      if (!Number.isFinite(delta) || delta <= 0) {
+        setSaving(false);
+        toast.error('Units to Add must be a number > 0');
+        return;
+      }
+      const product = products.find((p) => p.id === formProductId);
+      if (!product) {
+        setSaving(false);
+        toast.error('Product not found');
+        return;
+      }
+      const payload = {
+        name: productLineName(product),
+        unit: 'pcs',
+        current_stock: delta,
+        unit_cost: cost,
+        reorder_level: reorder,
+        product_id: formProductId,
+      };
+      const { error: insErr } = await supabase.from('inventory_items').insert({
+        business_id: businessId,
+        ...payload,
+      });
+      setSaving(false);
+      if (insErr) {
+        toast.error(insErr.message);
+        return;
+      }
+      toast.success('Inventory line added');
+      await maybeSyncCostFromInventorySave(formProductId, cost);
+    } else {
+      const row = rows.find((r) => r.id === editingId);
+      if (!row) {
+        setSaving(false);
+        toast.error('Row not found');
+        return;
+      }
+      const stock = Number(formStock);
+      if (!Number.isFinite(stock) || stock < 0) {
+        setSaving(false);
+        toast.error('Current stock must be a number ≥ 0');
+        return;
+      }
+
+      let name = row.name;
+      let productId = row.product_id;
+      if (productId) {
+        const p = products.find((x) => x.id === productId);
+        if (p) name = productLineName(p);
+      }
+
+      const payload = {
+        name,
+        unit: row.unit || 'pcs',
+        current_stock: stock,
+        unit_cost: cost,
+        reorder_level: reorder,
+        product_id: productId,
+      };
+
       const { error: upErr } = await supabase
         .from('inventory_items')
         .update(payload)
@@ -261,59 +333,14 @@ export default function InventoryPage() {
         return;
       }
       toast.success('Inventory line updated');
-    } else {
-      const { error: insErr } = await supabase.from('inventory_items').insert({
-        business_id: businessId,
-        ...payload,
-      });
-      setSaving(false);
-      if (insErr) {
-        toast.error(insErr.message);
-        return;
+      if (productId) {
+        await maybeSyncCostFromInventorySave(productId, cost);
       }
-      toast.success('Inventory line added');
     }
 
-    setLinkChoiceOpen(false);
     resetForm();
     setDialogOpen(false);
     await load();
-  }
-
-  async function submitForm(e: FormEvent) {
-    e.preventDefault();
-    if (!businessId) return;
-
-    if (formProductId) {
-      await persistItem(formProductId);
-      return;
-    }
-
-    if (!formName.trim()) {
-      toast.error('Name is required');
-      return;
-    }
-
-    setLinkChoiceOpen(true);
-  }
-
-  async function handleSaveUnlinked() {
-    await persistItem(null);
-  }
-
-  async function handleSaveWithStub() {
-    if (!businessId) return;
-    const cost = Number(formCost);
-    const supabase = getSupabaseClient();
-    setSaving(true);
-    const stub = await insertStubProductForInventory(supabase, businessId, formName.trim(), cost);
-    if (stub.error || !stub.id) {
-      setSaving(false);
-      toast.error(stub.error ?? 'Could not create product');
-      return;
-    }
-    setSaving(false);
-    await persistItem(stub.id);
   }
 
   if (session.kind === 'loading') {
@@ -346,7 +373,7 @@ export default function InventoryPage() {
     <div className="space-y-8">
       <PageHeader
         title="Inventory"
-        description="Manual stock lines; link a catalog product so sales and stock-in expenses update quantity. Saving a linked line sets the stock ledger for that product to this quantity."
+        description="Each line is tied to a catalog product. On-hand quantity stays in sync with sales and stock-purchase expenses. When adding a line, Units to Add increases stock for that product."
         actions={
           <>
             <Button type="button" variant="outline" className="h-11 gap-2 rounded-xl" onClick={downloadInventoryTemplate}>
@@ -407,14 +434,27 @@ export default function InventoryPage() {
         </Card>
       </div>
 
-      <div className="relative max-w-md">
-        <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-        <Input
-          value={searchQuery}
-          onChange={(e) => setSearchQuery(e.target.value)}
-          placeholder="Search by name or unit…"
-          className="rounded-xl pl-10"
-        />
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+        <div className="relative max-w-md flex-1">
+          <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+          <Input
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+            placeholder="Search by name or unit…"
+            className="rounded-xl pl-10"
+          />
+        </div>
+        <div className="flex items-center gap-2 sm:shrink-0">
+          <Switch
+            id="inv-show-zero"
+            checked={showZeroStock}
+            onCheckedChange={setShowZeroStock}
+            aria-label="Show zero-stock lines"
+          />
+          <Label htmlFor="inv-show-zero" className="cursor-pointer text-sm font-medium text-foreground">
+            Show zero stock
+          </Label>
+        </div>
       </div>
 
       <Card className="overflow-hidden border-border/80 shadow-md">
@@ -424,7 +464,7 @@ export default function InventoryPage() {
         <CardContent className="pt-0">
           {loading ? (
             <p className="text-sm text-muted-foreground">Loading…</p>
-          ) : filtered.length === 0 && rows.length === 0 ? (
+          ) : rows.length === 0 ? (
             <div className="flex min-h-[240px] flex-col items-center justify-center gap-3 text-center">
               <div className="flex h-14 w-14 items-center justify-center rounded-full bg-muted">
                 <Warehouse className="h-7 w-7 text-muted-foreground" />
@@ -435,15 +475,27 @@ export default function InventoryPage() {
                 Add your first line
               </Button>
             </div>
-          ) : filtered.length === 0 ? (
+          ) : searchFiltered.length === 0 ? (
             <div className="flex min-h-[200px] flex-col items-center justify-center gap-2 px-4 py-8 text-center">
               <p className="text-sm font-medium text-foreground">No matching lines</p>
               <p className="text-xs text-muted-foreground">Try a different search term.</p>
             </div>
+          ) : visibleRows.length === 0 ? (
+            <div className="flex min-h-[200px] flex-col items-center justify-center gap-2 px-4 py-8 text-center">
+              <p className="text-sm font-medium text-foreground">No lines with stock on hand</p>
+              <p className="text-xs text-muted-foreground">
+                Turn on <span className="font-medium text-foreground">Show zero stock</span> to include zero-quantity rows.
+              </p>
+            </div>
           ) : (
             <>
               <div className="md:hidden">
-                <InventoryMobileList rows={filtered} products={products} onEdit={startEdit} />
+                <InventoryMobileList
+                  rows={visibleRows}
+                  products={products}
+                  onEdit={startEdit}
+                  dimZeroStock={showZeroStock}
+                />
               </div>
               <div className="hidden md:block">
                 <div className="overflow-x-auto">
@@ -461,17 +513,20 @@ export default function InventoryPage() {
                       </TableRow>
                     </TableHeader>
                     <TableBody>
-                      {filtered.map((r) => {
+                      {visibleRows.map((r) => {
                         const low = isLowStock(r);
                         const val = Number(r.current_stock) * Number(r.unit_cost);
                         const linked = r.product_id ? products.find((p) => p.id === r.product_id) : null;
+                        const zeroShown = showZeroStock && Number(r.current_stock) <= 0;
                         return (
                           <TableRow
                             key={r.id}
                             className={
-                              low
-                                ? 'bg-amber-50/80 hover:bg-amber-50 dark:bg-amber-950/25 dark:hover:bg-amber-950/35'
-                                : 'hover:bg-muted/40'
+                              zeroShown
+                                ? 'border-destructive/20 bg-destructive/5 text-muted-foreground hover:bg-destructive/10 dark:bg-destructive/10'
+                                : low
+                                  ? 'bg-amber-50/80 hover:bg-amber-50 dark:bg-amber-950/25 dark:hover:bg-amber-950/35'
+                                  : 'hover:bg-muted/40'
                             }
                           >
                             <TableCell className="font-medium text-foreground">{r.name}</TableCell>
@@ -519,45 +574,86 @@ export default function InventoryPage() {
           <DialogHeader>
             <DialogTitle>{editingId ? 'Edit inventory line' : 'Add inventory line'}</DialogTitle>
             <DialogDescription>
-              Link a catalog product so sales and stock-in expenses update quantity automatically. When linked, saving
-              overwrites the ledger stock for that product to match this line. Leave unlinked for off-catalog tracking
-              only.
+              {editingId
+                ? 'Update on-hand quantity and costs. The catalog product cannot be changed — add a new line if you need a different product.'
+                : 'Choose a product from your catalog. Units to Add increases on-hand stock for that product (new lines start from zero on this row).'}
             </DialogDescription>
           </DialogHeader>
-          <form onSubmit={(e) => void submitForm(e)} className="space-y-4">
+          <form onSubmit={(e) => void submitInventoryForm(e)} className="space-y-4">
+            {editingId && rows.find((r) => r.id === editingId)?.product_id ? (
+              <div className="space-y-2">
+                <Label className="text-[11px] font-bold uppercase tracking-wide text-muted-foreground">Product</Label>
+                <p className="text-sm font-semibold text-foreground">{pickerLabel ?? '—'}</p>
+                <p className="text-[11px] text-muted-foreground">Product link is fixed for this row.</p>
+              </div>
+            ) : null}
+            {editingId && !rows.find((r) => r.id === editingId)?.product_id ? (
+              <div className="space-y-2 rounded-lg border border-amber-200/80 bg-amber-50/90 p-3 text-sm dark:border-amber-900/50 dark:bg-amber-950/30">
+                <p className="font-medium text-foreground">Legacy line (not linked)</p>
+                <p className="text-muted-foreground">
+                  <span className="font-medium text-foreground">{rows.find((r) => r.id === editingId)?.name ?? '—'}</span>{' '}
+                  — imported or created before catalog-only lines. You can adjust stock and cost; link by creating a new
+                  line from Products if needed.
+                </p>
+              </div>
+            ) : null}
+            {!editingId ? (
+              <div className="space-y-2">
+                <Label className="text-[11px] font-bold uppercase tracking-wide text-muted-foreground">Product *</Label>
+                <ProductPicker
+                  products={products}
+                  triggerLabel={pickerLabel}
+                  onPick={(p) => {
+                    setFormProductId(p.id);
+                    setPickerLabel(productLineName(p));
+                    setFormCost(String(p.cost_price ?? ''));
+                  }}
+                />
+                {formProductId ? (
+                  <p className="text-sm font-medium text-foreground">
+                    {(() => {
+                      const sel = products.find((x) => x.id === formProductId);
+                      return sel ? productLineName(sel) : '—';
+                    })()}
+                  </p>
+                ) : null}
+                {duplicateProductForAdd ? (
+                  <p className="text-sm text-destructive">
+                    This product already has an inventory row — use Edit on that row instead.
+                  </p>
+                ) : null}
+              </div>
+            ) : null}
+
             <div className="space-y-1">
-              <Label>Name *</Label>
-              <Input value={formName} onChange={(e) => setFormName(e.target.value)} required />
+              <Label>{editingId ? 'Current stock *' : 'Units to Add *'}</Label>
+              <Input
+                type="number"
+                inputMode="decimal"
+                min={editingId ? 0 : undefined}
+                step="0.001"
+                value={formStock}
+                onChange={(e) => setFormStock(e.target.value)}
+                required
+              />
+              {!editingId ? (
+                <p className="text-[11px] text-muted-foreground">
+                  Adds to existing stock. Current:{' '}
+                  {formProductId && !duplicateProductForAdd ? 0 : formProductId ? '—' : 0} units
+                </p>
+              ) : null}
             </div>
             <div className="space-y-1">
-              <Label>Unit</Label>
-              <Input value={formUnit} onChange={(e) => setFormUnit(e.target.value)} placeholder="pcs, kg, …" />
-            </div>
-            <div className="grid gap-3 sm:grid-cols-2">
-              <div className="space-y-1">
-                <Label>Current stock *</Label>
-                <Input
-                  type="number"
-                  inputMode="decimal"
-                  min={0}
-                  step="0.001"
-                  value={formStock}
-                  onChange={(e) => setFormStock(e.target.value)}
-                  required
-                />
-              </div>
-              <div className="space-y-1">
-                <Label>Unit cost (₹) *</Label>
-                <Input
-                  type="number"
-                  inputMode="decimal"
-                  min={0}
-                  step="0.01"
-                  value={formCost}
-                  onChange={(e) => setFormCost(e.target.value)}
-                  required
-                />
-              </div>
+              <Label>Unit cost (₹) *</Label>
+              <Input
+                type="number"
+                inputMode="decimal"
+                min={0}
+                step="0.01"
+                value={formCost}
+                onChange={(e) => setFormCost(e.target.value)}
+                required
+              />
             </div>
             <div className="space-y-1">
               <Label>Reorder level (optional)</Label>
@@ -571,58 +667,16 @@ export default function InventoryPage() {
                 placeholder="Highlight row when stock ≤ this"
               />
             </div>
-            <div className="space-y-2">
-              <Label>Catalog product (optional)</Label>
-              <ProductPicker
-                products={products}
-                triggerLabel={pickerLabel}
-                onPick={(p) => {
-                  setFormProductId(p.id);
-                  setPickerLabel(`${p.name}${p.variant ? ` · ${p.variant}` : ''}`);
-                }}
-              />
-              {pickerLabel ? (
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="sm"
-                  className="text-muted-foreground"
-                  onClick={() => {
-                    setFormProductId(null);
-                    setPickerLabel(undefined);
-                  }}
-                >
-                  Clear product link
-                </Button>
-              ) : null}
-            </div>
-            <Button type="submit" size="full" disabled={saving}>
+            <Button
+              type="submit"
+              size="full"
+              disabled={saving || (!editingId && (!formProductId || duplicateProductForAdd))}
+            >
               {saving ? 'Saving…' : 'Save'}
             </Button>
           </form>
         </DialogContent>
       </Dialog>
-
-      <AlertDialog open={linkChoiceOpen} onOpenChange={setLinkChoiceOpen}>
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>Save without catalog product?</AlertDialogTitle>
-            <AlertDialogDescription>
-              This line will not sync with sales or stock-in expenses until you link a product. You can create a stub in
-              Products (category GENERAL, MRP = unit cost) and link it now, or save unlinked.
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter className="flex-col gap-2 sm:flex-row sm:justify-end">
-            <AlertDialogCancel disabled={saving}>Cancel</AlertDialogCancel>
-            <Button type="button" variant="outline" disabled={saving} onClick={() => void handleSaveUnlinked()}>
-              Save unlinked
-            </Button>
-            <Button type="button" disabled={saving} onClick={() => void handleSaveWithStub()}>
-              Create in Products &amp; save
-            </Button>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
     </div>
   );
 }

@@ -29,7 +29,14 @@ export async function fetchActiveExpenses(
   if (error) {
     return { data: null, error: new Error(error.message) };
   }
-  return { data: data as Expense[], error: null };
+  const rows = (data ?? []) as Expense[];
+  return {
+    data: rows.map((row) => ({
+      ...row,
+      category: row.category ?? null,
+    })),
+    error: null,
+  };
 }
 
 /**

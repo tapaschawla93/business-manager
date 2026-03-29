@@ -62,9 +62,11 @@ export function ExpenseList({
                       <TableHead className="ui-table-head py-4">Date</TableHead>
                       <TableHead className="ui-table-head py-4">Vendor</TableHead>
                       <TableHead className="ui-table-head py-4">Item</TableHead>
+                      <TableHead className="ui-table-head py-4">Category</TableHead>
                       <TableHead className="ui-table-head py-4 text-right">Units</TableHead>
                       <TableHead className="ui-table-head py-4 text-right">Amount</TableHead>
                       <TableHead className="ui-table-head py-4">Payment</TableHead>
+                      <TableHead className="ui-table-head py-4">Stock</TableHead>
                       <TableHead className="ui-table-head py-4 text-right">Actions</TableHead>
                     </TableRow>
                   </TableHeader>
@@ -76,6 +78,9 @@ export function ExpenseList({
                         </TableCell>
                         <TableCell className="font-medium text-foreground">{row.vendor_name}</TableCell>
                         <TableCell className="max-w-[140px] truncate text-sm">{row.item_description}</TableCell>
+                        <TableCell className="max-w-[120px] truncate text-sm text-muted-foreground">
+                          {row.category?.trim() ? row.category : '—'}
+                        </TableCell>
                         <TableCell className="text-right tabular-nums text-sm">{row.quantity}</TableCell>
                         <TableCell className="text-right text-sm font-bold tabular-nums">
                           {formatInrDisplay(Number(row.total_amount))}
@@ -91,6 +96,15 @@ export function ExpenseList({
                           >
                             {row.payment_mode}
                           </Badge>
+                        </TableCell>
+                        <TableCell>
+                          {row.update_inventory === true ? (
+                            <Badge variant="secondary" className="font-semibold">
+                              Stock
+                            </Badge>
+                          ) : (
+                            <span className="text-sm text-muted-foreground">—</span>
+                          )}
                         </TableCell>
                         <TableCell className="text-right">
                           <div className="flex justify-end gap-1">

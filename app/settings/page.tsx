@@ -168,6 +168,8 @@ export default function SettingsPage() {
       'total_amount',
       'payment_mode',
       'notes',
+      'update_inventory',
+      'category',
       'created_at',
       'updated_at',
     ];
@@ -196,7 +198,17 @@ export default function SettingsPage() {
   }
 
   function downloadTemplateExpenses() {
-    const headers = ['date', 'vendor_name', 'item_description', 'quantity', 'unit_cost', 'total_amount', 'payment_mode', 'notes'];
+    const headers = [
+      'date',
+      'vendor_name',
+      'item_description',
+      'quantity',
+      'unit_cost',
+      'total_amount',
+      'payment_mode',
+      'notes',
+      'category',
+    ];
     const rows = [
       {
         date: '2026-03-27',
@@ -207,6 +219,7 @@ export default function SettingsPage() {
         total_amount: '250',
         payment_mode: 'cash',
         notes: '',
+        category: 'Operations',
       },
     ];
     downloadCsv('template_expenses.csv', rowsToCsv(headers, rows));
@@ -391,6 +404,9 @@ export default function SettingsPage() {
             total_amount: totalRaw ?? qty * unitCost,
             payment_mode: mode,
             notes: getNullableString(r, 'notes'),
+            product_id: null,
+            update_inventory: false,
+            category: getString(r, 'category').trim() || null,
           },
         });
       }

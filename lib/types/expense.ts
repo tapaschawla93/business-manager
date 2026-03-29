@@ -13,6 +13,10 @@ export type Expense = {
   unit_cost: number;
   total_amount: number;
   payment_mode: 'cash' | 'online';
+  /** When true and `product_id` is set, stock delta runs on insert/update. Omitted on legacy rows until migration. */
+  update_inventory?: boolean;
+  /** Non-inventory label (e.g. Marketing). Null for stock purchases. */
+  category: string | null;
   notes: string | null;
   deleted_at: string | null;
   created_at: string;
@@ -31,4 +35,6 @@ export type ExpenseInsert = {
   total_amount: number;
   payment_mode: 'cash' | 'online';
   notes: string | null;
+  update_inventory?: boolean;
+  category?: string | null;
 };

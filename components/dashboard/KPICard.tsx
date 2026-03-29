@@ -11,6 +11,7 @@ export function KPICard({
   label,
   value,
   hint,
+  footer,
   valueClassName,
   iconClassName,
   trendLabel,
@@ -20,6 +21,8 @@ export function KPICard({
   label: string;
   value: string;
   hint?: string;
+  /** Extra content below the hint (e.g. secondary KPI lines). */
+  footer?: ReactNode;
   valueClassName?: string;
   iconClassName?: string;
   /** e.g. "+12.5%", "Stock", "Live" — matches reference dashboard pills */
@@ -70,6 +73,7 @@ export function KPICard({
         {hint ? (
           <p className="mt-0.5 text-[11px] leading-snug text-muted-foreground md:mt-1 md:text-xs">{hint}</p>
         ) : null}
+        {footer ? <div className="mt-2 space-y-0.5 border-t border-border/50 pt-2">{footer}</div> : null}
       </CardContent>
     </Card>
   );
