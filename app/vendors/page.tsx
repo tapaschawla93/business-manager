@@ -205,36 +205,6 @@ export default function VendorsPage() {
             <Button
               type="button"
               variant="outline"
-              className="h-10 gap-2 rounded-xl text-sm md:h-11 md:text-base"
-              onClick={downloadVendorsTemplate}
-            >
-              <Download className="h-4 w-4" aria-hidden />
-              Template
-            </Button>
-            <Button
-              type="button"
-              variant="outline"
-              className="h-10 gap-2 rounded-xl text-sm md:h-11 md:text-base"
-              disabled={importing}
-              onClick={() => uploadRef.current?.click()}
-            >
-              <Upload className="h-4 w-4" aria-hidden />
-              {importing ? 'Uploading…' : 'Bulk Upload'}
-            </Button>
-            <input
-              ref={uploadRef}
-              type="file"
-              accept=".csv,text/csv"
-              className="hidden"
-              onChange={(e) => {
-                const file = e.currentTarget.files?.[0];
-                if (file) void importVendorsFile(file);
-                e.currentTarget.value = '';
-              }}
-            />
-            <Button
-              type="button"
-              variant="outline"
               size="sm"
               onClick={() => void load()}
               className="h-10 gap-2 rounded-xl text-sm md:h-11 md:text-base"

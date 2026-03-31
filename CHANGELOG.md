@@ -6,6 +6,8 @@ All notable changes to this project are documented here. Format loosely follows 
 
 ### Added
 
+- **Customers module (`/customers`):** search + repeat-customer filter, order-history dialog, desktop/mobile row actions, and customer record lifecycle controls (**Edit**, **Delete**, **Create Record** for sales-only rows).
+- **Customers mobile list:** new accordion layout with per-row action menu to match other modules on small screens.
 - **Mobile row actions:** **Products**, **Inventory**, **Sales** — kebab with **Edit** + **Archive** / **Delete line**. **Vendors** / **Expenses** mobile kebab — **Archive** only (tap vendor name for detail; **Expenses** desktop table still has **Edit**). **`components/ui/dropdown-menu.tsx`** (Radix **DropdownMenu**).
 - **Inventory mobile delete:** **`inventory_apply_delta_for_tenant`** (−`current_stock` when linked) then **`inventory_items` delete** (works without **`delete_inventory_item`** RPC).
 - **Expenses ↔ ledger:** **`expenses_sync_inventory`** does nothing on **UPDATE** — archiving or editing an expense does not change stock; new stock purchases still apply **`inventory_apply_delta_for_tenant`** after **INSERT**. Migration **`20260401170000_expenses_sync_inventory_update_noop.sql`**.
@@ -49,6 +51,7 @@ All notable changes to this project are documented here. Format loosely follows 
 
 ### Changed
 
+- **Customers aggregation logic:** customer rows now derive from sales identity (`customer_id` → phone → sale fallback), include zero-order persisted customers, and avoid unsafe same-name merging.
 - **Breaking (Supabase + client):** **`get_dashboard_kpis`** no longer returns **`cash_collected`** / **`online_collected`** — apply **`20260331140000_dashboard_kpis_net_cash_inventory_items.sql`** and update **`lib/queries/dashboard.ts`** / home page together.
 - **Mobile polish — lists:** below **`md`**, accordion mobile lists for **Expenses** (`ExpenseMobileList` + `ExpenseList` split), **Products** (`ProductsMobileList`), **Inventory** (`InventoryMobileList`, `productById` map, linked vs unlinked summary + **Add to catalog**), **Vendors** (`VendorsMobileList`); **`text-xs`**-aligned row chrome + compact single-line rows (expenses/sales headers). Desktop tables unchanged (`hidden md:block`).
 - **Mobile polish — actions:** slightly smaller primary/outline buttons on small screens (**`h-10`**, **`text-sm`**, **`md:h-11`** / **`md:text-base`**) on **Products**, **Sales**, **Expenses**, **Inventory**, **Vendors** pages + **`ExpenseForm`**; **`Button`** **`size="full"`** default height relaxed so pages can override.
@@ -75,6 +78,9 @@ All notable changes to this project are documented here. Format loosely follows 
 
 ### Fixed
 
+- **Customer backfill + linking:** migration **`20260401230000_v3_backfill_customers_inventory_delta_fix.sql`** creates missing `customers` from legacy `sales.customer_phone` and fills missing `sales.customer_id`.
+- **Inventory sale errors:** `inventory_apply_delta` now validates projected stock before update, so insufficient stock raises a clear business error instead of `inventory_quantity_on_hand_check`.
+- **Excel backup completeness:** backup workbook now exports `inventory_items`, `inventory` ledger, and `customers` reliably; query failures are surfaced instead of silently producing partial files.
 - **ExpenseForm:** failed **vendors** / **products** Supabase loads show **`toast.error`** (not silent empty pickers).
 - **AppShell:** failed **profile → business name** embed shows **`toast.error`**; **`devError`** in development. **`cancelled`** checked before toast (no post-unmount noise).
 

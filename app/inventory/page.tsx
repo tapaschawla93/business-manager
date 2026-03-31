@@ -438,36 +438,6 @@ export default function InventoryPage() {
               type="button"
               variant="outline"
               className="h-10 gap-2 rounded-xl text-sm md:h-11 md:text-base"
-              onClick={downloadInventoryTemplate}
-            >
-              <Download className="h-4 w-4" aria-hidden />
-              Template
-            </Button>
-            <Button
-              type="button"
-              variant="outline"
-              className="h-10 gap-2 rounded-xl text-sm md:h-11 md:text-base"
-              disabled={importing}
-              onClick={() => uploadRef.current?.click()}
-            >
-              <Upload className="h-4 w-4" aria-hidden />
-              {importing ? 'Uploading…' : 'Bulk Upload'}
-            </Button>
-            <input
-              ref={uploadRef}
-              type="file"
-              accept=".csv,text/csv"
-              className="hidden"
-              onChange={(e) => {
-                const f = e.currentTarget.files?.[0];
-                if (f) void importInventoryFile(f);
-                e.currentTarget.value = '';
-              }}
-            />
-            <Button
-              type="button"
-              variant="outline"
-              className="h-10 gap-2 rounded-xl text-sm md:h-11 md:text-base"
               onClick={() => void load()}
             >
               <RefreshCw className="h-4 w-4" aria-hidden />

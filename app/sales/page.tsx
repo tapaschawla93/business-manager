@@ -305,36 +305,6 @@ export default function SalesPage() {
           <>
             <Button
               type="button"
-              variant="outline"
-              className="h-10 gap-2 rounded-xl text-sm md:h-11 md:text-base"
-              onClick={downloadSalesTemplate}
-            >
-              <Download className="h-4 w-4" aria-hidden />
-              Template
-            </Button>
-            <Button
-              type="button"
-              variant="outline"
-              className="h-10 gap-2 rounded-xl text-sm md:h-11 md:text-base"
-              onClick={() => document.getElementById('sales-upload-input')?.click()}
-              disabled={importing}
-            >
-              <Upload className="h-4 w-4" aria-hidden />
-              {importing ? 'Uploading…' : 'Bulk Upload'}
-            </Button>
-            <input
-              id="sales-upload-input"
-              type="file"
-              accept=".csv,text/csv"
-              className="hidden"
-              onChange={(e) => {
-                const file = e.currentTarget.files?.[0];
-                if (file) void importSalesFile(file);
-                e.currentTarget.value = '';
-              }}
-            />
-            <Button
-              type="button"
               className="h-10 gap-2 rounded-xl text-sm font-semibold shadow-sm md:h-11 md:text-base"
               onClick={openNewSaleDialog}
             >

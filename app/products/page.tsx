@@ -33,6 +33,7 @@ import { getProductMargin, productMarginToneClass } from '@/lib/products/product
  * business_id from profiles; RLS enforces isolation.
  */
 export default function ProductsPage() {
+  type ComponentDraft = { inventory_item_id: string; quantity_per_unit: string };
   const session = useBusinessSession({ onMissingBusiness: 'error' });
   const businessId = session.kind === 'ready' ? session.businessId : null;
   const userEmail = session.kind === 'ready' ? session.email : null;
@@ -55,6 +56,8 @@ export default function ProductsPage() {
   const [searchQuery, setSearchQuery] = useState('');
   const [importing, setImporting] = useState(false);
   const productsUploadRef = useRef<HTMLInputElement | null>(null);
+  const [inventoryOptions, setInventoryOptions] = useState<Array<{ id: string; name: string }>>([]);
+  const [componentsDraft, setComponentsDraft] = useState<ComponentDraft[]>([]);
 
   const loadProducts = useCallback(async () => {
     const supabase = getSupabaseClient();
@@ -74,10 +77,43 @@ export default function ProductsPage() {
     setProducts((data as Product[]) ?? []);
   }, []);
 
+  const loadInventoryOptions = useCallback(async () => {
+    const supabase = getSupabaseClient();
+    const { data, error: invErr } = await supabase
+      .from('inventory_items')
+      .select('id, name')
+      .is('deleted_at', null)
+      .order('name', { ascending: true });
+    if (invErr) {
+      toast.error(invErr.message);
+      return;
+    }
+    setInventoryOptions(((data ?? []) as Array<{ id: string; name: string }>) ?? []);
+  }, []);
+
+  async function loadComponentsForProduct(productId: string) {
+    const supabase = getSupabaseClient();
+    const { data, error: compErr } = await supabase
+      .from('product_components')
+      .select('inventory_item_id, quantity_per_unit')
+      .eq('product_id', productId);
+    if (compErr) {
+      toast.error(compErr.message);
+      return;
+    }
+    setComponentsDraft(
+      ((data ?? []) as Array<{ inventory_item_id: string; quantity_per_unit: number }>).map((r) => ({
+        inventory_item_id: r.inventory_item_id,
+        quantity_per_unit: String(r.quantity_per_unit),
+      })),
+    );
+  }
+
   useEffect(() => {
     if (!businessId) return;
     void loadProducts();
-  }, [businessId, loadProducts]);
+    void loadInventoryOptions();
+  }, [businessId, loadProducts, loadInventoryOptions]);
 
   const filteredProducts = useMemo(() => {
     const q = searchQuery.trim().toLowerCase();
@@ -99,6 +135,7 @@ export default function ProductsPage() {
     setFormCost('');
     setFormHsn('');
     setFormTax('');
+    setComponentsDraft([]);
   }
 
   function openAdd() {
@@ -116,11 +153,47 @@ export default function ProductsPage() {
     setFormHsn(row.hsn_code ?? '');
     setFormTax(row.tax_pct != null ? String(row.tax_pct) : '');
     setDialogOpen(true);
+    void loadComponentsForProduct(row.id);
   }
 
   function handleDialogOpenChange(open: boolean) {
     setDialogOpen(open);
     if (!open) resetForm();
+  }
+
+  function addComponentRow() {
+    setComponentsDraft((prev) => [...prev, { inventory_item_id: '', quantity_per_unit: '' }]);
+  }
+
+  function updateComponentRow(idx: number, patch: Partial<{ inventory_item_id: string; quantity_per_unit: string }>) {
+    setComponentsDraft((prev) => prev.map((r, i) => (i === idx ? { ...r, ...patch } : r)));
+  }
+
+  function removeComponentRow(idx: number) {
+    setComponentsDraft((prev) => prev.filter((_, i) => i !== idx));
+  }
+
+  async function saveProductComponents(productId: string) {
+    const supabase = getSupabaseClient();
+    const cleanRows = componentsDraft
+      .map((r) => ({
+        inventory_item_id: r.inventory_item_id,
+        quantity_per_unit: Number(r.quantity_per_unit),
+      }))
+      .filter((r) => r.inventory_item_id && Number.isFinite(r.quantity_per_unit) && r.quantity_per_unit > 0);
+
+    const { error: delErr } = await supabase.from('product_components').delete().eq('product_id', productId);
+    if (delErr) throw new Error(delErr.message);
+
+    if (cleanRows.length === 0) return;
+    const { error: insErr } = await supabase.from('product_components').insert(
+      cleanRows.map((r) => ({
+        product_id: productId,
+        inventory_item_id: r.inventory_item_id,
+        quantity_per_unit: r.quantity_per_unit,
+      })),
+    );
+    if (insErr) throw new Error(insErr.message);
   }
 
   async function handleSubmit(e: FormEvent) {
@@ -194,13 +267,35 @@ export default function ProductsPage() {
         toast.error(upErr.message);
         return;
       }
+      try {
+        await saveProductComponents(editingId);
+      } catch (compErr) {
+        const msg = compErr instanceof Error ? compErr.message : 'Failed to save components';
+        setError(msg);
+        toast.error(msg);
+        return;
+      }
       toast.success('Product updated');
     } else {
-      const { error: insErr } = await supabase.from('products').insert(payload);
+      const { data: inserted, error: insErr } = await supabase
+        .from('products')
+        .insert(payload)
+        .select('id')
+        .single();
       setSaving(false);
       if (insErr) {
         setError(insErr.message);
         toast.error(insErr.message);
+        return;
+      }
+      try {
+        if (inserted?.id) {
+          await saveProductComponents(inserted.id);
+        }
+      } catch (compErr) {
+        const msg = compErr instanceof Error ? compErr.message : 'Failed to save components';
+        setError(msg);
+        toast.error(msg);
         return;
       }
       toast.success('Product added');
@@ -334,36 +429,6 @@ export default function ProductsPage() {
         description="Master list of all products and their category mappings."
         actions={
           <>
-            <Button
-              type="button"
-              variant="outline"
-              className="h-10 gap-2 rounded-xl text-sm md:h-11 md:text-base"
-              onClick={downloadProductsTemplate}
-            >
-              <Download className="h-4 w-4" aria-hidden />
-              Template
-            </Button>
-            <Button
-              type="button"
-              variant="outline"
-              className="h-10 gap-2 rounded-xl text-sm md:h-11 md:text-base"
-              onClick={() => productsUploadRef.current?.click()}
-              disabled={importing}
-            >
-              <Upload className="h-4 w-4" aria-hidden />
-              {importing ? 'Uploading…' : 'Bulk Upload'}
-            </Button>
-            <input
-              ref={productsUploadRef}
-              type="file"
-              accept=".csv,text/csv"
-              className="hidden"
-              onChange={(e) => {
-                const file = e.currentTarget.files?.[0];
-                if (file) void importProductsFile(file);
-                e.currentTarget.value = '';
-              }}
-            />
             <Button
               type="button"
               onClick={openAdd}
@@ -565,6 +630,49 @@ export default function ProductsPage() {
                     onChange={(e) => setFormTax(e.target.value)}
                   />
                 </Field>
+              </div>
+              <div className="space-y-2 rounded-xl border border-border/70 p-3">
+                <div className="flex items-center justify-between">
+                  <p className="text-sm font-semibold text-foreground">Components</p>
+                  <Button type="button" variant="outline" className="h-8 text-xs" onClick={addComponentRow}>
+                    Add component
+                  </Button>
+                </div>
+                {componentsDraft.length === 0 ? (
+                  <p className="text-xs text-muted-foreground">
+                    No components linked. Products without components keep backward-compatible sale behavior.
+                  </p>
+                ) : (
+                  <div className="space-y-2">
+                    {componentsDraft.map((row, idx) => (
+                      <div key={`${idx}-${row.inventory_item_id}`} className="grid grid-cols-[1fr_120px_auto] gap-2">
+                        <select
+                          className="h-10 rounded-md border border-input bg-background px-3 text-sm"
+                          value={row.inventory_item_id}
+                          onChange={(e) => updateComponentRow(idx, { inventory_item_id: e.target.value })}
+                        >
+                          <option value="">Select inventory item</option>
+                          {inventoryOptions.map((opt) => (
+                            <option key={opt.id} value={opt.id}>
+                              {opt.name}
+                            </option>
+                          ))}
+                        </select>
+                        <Input
+                          type="number"
+                          min={0}
+                          step="0.001"
+                          value={row.quantity_per_unit}
+                          onChange={(e) => updateComponentRow(idx, { quantity_per_unit: e.target.value })}
+                          placeholder="Qty/unit"
+                        />
+                        <Button type="button" variant="ghost" className="h-10 w-10 p-0" onClick={() => removeComponentRow(idx)}>
+                          <Trash2 className="h-4 w-4 text-destructive" />
+                        </Button>
+                      </div>
+                    ))}
+                  </div>
+                )}
               </div>
               <Button type="submit" size="full" disabled={saving} className="mt-2">
                 {saving ? 'Saving…' : 'Save Product'}

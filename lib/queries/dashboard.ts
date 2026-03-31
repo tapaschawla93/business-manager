@@ -58,6 +58,14 @@ export type TopProductsPayload = {
   sales_by_category: CategorySalesRow[];
 };
 
+export type MonthlyPerformanceRow = {
+  month: number;
+  year: number;
+  revenue: number;
+  expenses: number;
+  profit: number;
+};
+
 function asFiniteNumber(v: unknown): number | null {
   if (typeof v === 'number') {
     return Number.isFinite(v) ? v : null;
@@ -232,4 +240,42 @@ export async function getTopProducts(
   }
 
   return { data: parsed, error: null };
+}
+
+export async function getMonthlyPerformance(
+  supabase: SupabaseClient,
+  range: DashboardDateRange,
+): Promise<{ data: MonthlyPerformanceRow[] | null; error: Error | null }> {
+  const { data, error } = await supabase.rpc('get_monthly_performance', {
+    p_from: range.from,
+    p_to: range.to,
+  });
+  if (error) return { data: null, error: new Error(error.message) };
+  if (!Array.isArray(data)) {
+    return { data: null, error: new Error('Invalid RPC response from `get_monthly_performance`.') };
+  }
+
+  const rows: MonthlyPerformanceRow[] = [];
+  for (const row of data) {
+    if (row === null || typeof row !== 'object' || Array.isArray(row)) {
+      return { data: null, error: new Error('Invalid monthly row payload.') };
+    }
+    const r = row as Record<string, unknown>;
+    const month = asFiniteNumber(r.month);
+    const year = asFiniteNumber(r.year);
+    const revenue = asFiniteNumber(r.revenue);
+    const expenses = asFiniteNumber(r.expenses);
+    const profit = asFiniteNumber(r.profit);
+    if (
+      month === null ||
+      year === null ||
+      revenue === null ||
+      expenses === null ||
+      profit === null
+    ) {
+      return { data: null, error: new Error('Invalid monthly row fields from RPC.') };
+    }
+    rows.push({ month, year, revenue, expenses, profit });
+  }
+  return { data: rows, error: null };
 }

@@ -420,3 +420,34 @@
 
 - **Detector breadth**: **`isPostgrestMissingRpcError`** matches generic substrings (**e.g. `does not exist`**); rare false positives could enter the fallback—tighten if you see odd behavior.
 - **Senior lens**: Prefer **one SECURITY DEFINER RPC** per multi-step mutation (**atomic**, consistent with **`save_sale`**). Client fallbacks are **product continuity**, not the architectural end state; **`update_sale`** cannot be replicated from the browser without widening **`sale_items`** RLS (usually a bad trade).
+
+---
+
+## Customers module (V3) — canonical identity, sales aggregation, and record lifecycle
+
+### Level 1 — Core concept
+
+- **What**: The Customers page is a **derived view** built from two sources: canonical rows in `customers` and transactional rows in `sales`.
+- **Why**: Historical sales can exist without a `customers` row (`customer_id` null, only phone/name on sale), so a pure `customers` query misses real buyers.
+- **When**: Use this pattern when identity quality evolves over time (legacy data + newer normalized relations).
+- **Fit**: We show one customer row per stable identity, with totals/order count from sales, while still allowing row-level customer management (edit/delete/create).
+
+### Level 2 — How it works
+
+- **Identity strategy**: Aggregate sales by `customer_id` first, else by normalized `customer_phone`, else as sale-unique fallback (`sale:<id>`). This avoids incorrect merges.
+- **Important tradeoff**: We intentionally **do not merge by name**; same name does not imply same person.
+- **Directory completeness**: After sales aggregation, append persisted `customers` rows with zero orders so the directory is complete even without sales.
+- **Lifecycle controls**:
+  - Rows with `customerId` support **Edit/Delete** (soft delete via `deleted_at`).
+  - Sales-only rows expose **Create Record** to promote them into canonical `customers`.
+- **Order history query**: Fetch by multiple match paths (`customer_id`, phone, name fallback) and de-duplicate by `sale.id`.
+
+### Level 3 — Deep dive
+
+- **Production behavior**: “Customer list” is a **projection**, not a base table. Any bug in keying logic becomes a reporting bug (wrong counts, wrong merges).
+- **Data quality implications**: Phone is the practical natural key in this product; if phone is missing/dirty, rows stay non-canonical until user creates/fixes records.
+- **Scaling**: Current client-side merge is fine at V1 volumes. At higher volumes, push aggregation into a DB RPC/view with indexed filters and deterministic key rules.
+- **Alternatives**:
+  - Strict canonical-only list (cleaner but hides legacy sales customers).
+  - Full ETL backfill job to guarantee every sale has `customer_id` (best long-term, more migration complexity).
+- **Senior lens**: Treat identity resolution rules as a product contract. Version rule changes carefully because they affect KPIs, repeat-customer counts, and user trust.

@@ -9,9 +9,11 @@ import { SessionRedirectNotice } from '@/components/SessionRedirectNotice';
 import {
   defaultDashboardYtdRange,
   getDashboardKPIs,
+  getMonthlyPerformance,
   getTopProducts,
   type DashboardDateRange,
   type DashboardKPIs,
+  type MonthlyPerformanceRow,
   type TopProductsPayload,
 } from '@/lib/queries/dashboard';
 import { formatInrDisplay } from '@/lib/formatInr';
@@ -19,6 +21,7 @@ import { PageHeader } from '@/components/PageHeader';
 import { KPICard } from '@/components/dashboard/KPICard';
 import { TopProductsTable } from '@/components/dashboard/TopProductsTable';
 import { SalesByCategoryTable } from '@/components/dashboard/SalesByCategoryTable';
+import { MonthlyPerformanceChart } from '@/components/dashboard/MonthlyPerformanceChart';
 import { DashboardDateRangeControl } from '@/components/dashboard/DashboardDateRangeControl';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Button } from '@/components/ui/button';
@@ -27,10 +30,15 @@ import {
   CircleDollarSign,
   Download,
   TrendingUp,
+  Upload,
   Wallet,
   Warehouse,
 } from 'lucide-react';
 import { toast } from 'sonner';
+import { downloadBackupWorkbook } from '@/lib/excel/downloadBackupWorkbook';
+import { downloadTemplateWorkbook } from '@/lib/excel/downloadTemplateWorkbook';
+import { parseWorkbook } from '@/lib/excel/parseWorkbook';
+import { uploadWorkbook } from '@/lib/excel/uploadWorkbook';
 
 function DashboardSkeleton({ phase }: { phase: 'session' | 'data' }) {
   return (
@@ -66,8 +74,11 @@ export default function HomePage() {
 
   const [kpis, setKpis] = useState<DashboardKPIs | null>(null);
   const [topProducts, setTopProducts] = useState<TopProductsPayload | null>(null);
+  const [monthlyPerformance, setMonthlyPerformance] = useState<MonthlyPerformanceRow[] | null>(null);
 
   const loadDashboardGenRef = useRef(0);
+  const dashboardUploadRef = useRef<HTMLInputElement>(null);
+  const [excelBusy, setExcelBusy] = useState<string | null>(null);
 
   useEffect(() => {
     if (!sessionReady) return;
@@ -81,17 +92,23 @@ export default function HomePage() {
     setError(null);
 
     try {
-      const [kpiRes, topRes] = await withTimeout(
-        Promise.all([getDashboardKPIs(supabase, range), getTopProducts(supabase, range)]),
+      const [kpiRes, topRes, monthlyRes] = await withTimeout(
+        Promise.all([
+          getDashboardKPIs(supabase, range),
+          getTopProducts(supabase, range),
+          getMonthlyPerformance(supabase, range),
+        ]),
         25_000,
         'Dashboard request timed out. Apply migrations 20260331130000_expenses_update_inventory_flag.sql and 20260331140000_dashboard_kpis_net_cash_inventory_items.sql on Supabase, then refresh.',
       );
       if (gen !== loadDashboardGenRef.current) return;
       if (kpiRes.error) throw kpiRes.error;
       if (topRes.error) throw topRes.error;
+      if (monthlyRes.error) throw monthlyRes.error;
 
       setKpis(kpiRes.data);
       setTopProducts(topRes.data);
+      setMonthlyPerformance(monthlyRes.data ?? []);
     } catch (e: unknown) {
       if (gen !== loadDashboardGenRef.current) return;
       const msg = e instanceof Error ? e.message : 'Failed to load dashboard';
@@ -142,6 +159,40 @@ export default function HomePage() {
       ? `${((kpis.gross_profit / kpis.total_revenue) * 100).toFixed(1)}%`
       : '0.0%';
 
+  async function handleDashboardBackup() {
+    setExcelBusy('backup');
+    try {
+      await downloadBackupWorkbook(getSupabaseClient());
+      toast.success('Backup downloaded');
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Backup failed');
+    } finally {
+      setExcelBusy(null);
+    }
+  }
+
+  function handleDashboardTemplate() {
+    downloadTemplateWorkbook();
+    toast.success('Template downloaded');
+  }
+
+  async function handleDashboardUpload(file: File) {
+    setExcelBusy('upload');
+    try {
+      const wb = await parseWorkbook(file);
+      const summary = await uploadWorkbook(getSupabaseClient(), wb);
+      const msg = `Upload: ${summary.added} added, ${summary.skipped} skipped, ${summary.errors.length} errors.`;
+      toast.success(msg);
+      if (summary.errors.length > 0) {
+        console.error('Workbook upload errors', summary.errors);
+      }
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Upload failed');
+    } finally {
+      setExcelBusy(null);
+    }
+  }
+
   return (
     <div
       className={
@@ -154,14 +205,49 @@ export default function HomePage() {
         description="Operating summary for the selected period: revenue, spend, cash position (sales minus expenses by payment mode), stock on hand at cost, and product/category breakdowns."
         actions={
           <>
+            <input
+              ref={dashboardUploadRef}
+              type="file"
+              className="sr-only"
+              accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+              aria-hidden
+              tabIndex={-1}
+              disabled={excelBusy !== null}
+              onChange={(e) => {
+                const file = e.target.files?.[0];
+                if (file) void handleDashboardUpload(file);
+                e.currentTarget.value = '';
+              }}
+            />
             <Button
               type="button"
               variant="outline"
               className="h-10 gap-2 rounded-xl border-border/80 text-sm font-semibold shadow-sm md:h-11 md:text-base"
-              onClick={() => toast.message('Backup Database — connect storage in a future release.')}
+              disabled={excelBusy !== null}
+              onClick={() => void handleDashboardBackup()}
             >
               <Download className="h-3.5 w-3.5 md:h-4 md:w-4" aria-hidden />
-              Backup Database
+              {excelBusy === 'backup' ? 'Downloading…' : 'Backup'}
+            </Button>
+            <Button
+              type="button"
+              variant="outline"
+              className="h-10 gap-2 rounded-xl border-border/80 text-sm font-semibold shadow-sm md:h-11 md:text-base"
+              disabled={excelBusy !== null}
+              onClick={handleDashboardTemplate}
+            >
+              <Download className="h-3.5 w-3.5 md:h-4 md:w-4" aria-hidden />
+              Template
+            </Button>
+            <Button
+              type="button"
+              variant="outline"
+              className="h-10 gap-2 rounded-xl border-border/80 text-sm font-semibold shadow-sm md:h-11 md:text-base"
+              disabled={excelBusy !== null}
+              onClick={() => dashboardUploadRef.current?.click()}
+            >
+              <Upload className="h-3.5 w-3.5 md:h-4 md:w-4" aria-hidden />
+              {excelBusy === 'upload' ? 'Uploading…' : 'Bulk upload'}
             </Button>
           </>
         }
@@ -255,6 +341,8 @@ export default function HomePage() {
               iconClassName="bg-muted text-muted-foreground"
             />
           </section>
+
+          {monthlyPerformance ? <MonthlyPerformanceChart rows={monthlyPerformance} /> : null}
 
           <section className="grid gap-3 md:gap-4">
             {topProducts ? <SalesByCategoryTable rows={topProducts.sales_by_category} /> : null}

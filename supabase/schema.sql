@@ -568,7 +568,8 @@ security definer
 set search_path = public
 as $$
 declare
-  v_qty numeric;
+  v_current numeric;
+  v_new numeric;
 begin
   if p_business_id is null or p_product_id is null then
     raise exception 'inventory_apply_delta: business_id and product_id required';
@@ -584,17 +585,29 @@ begin
   values (p_business_id, p_product_id, 0)
   on conflict (product_id) do nothing;
 
-  update public.inventory
-  set
-    quantity_on_hand = round((public.inventory.quantity_on_hand + p_delta)::numeric, 3),
-    updated_at = now()
+  select quantity_on_hand
+  into v_current
+  from public.inventory
   where product_id = p_product_id
     and business_id = p_business_id
-  returning quantity_on_hand into v_qty;
+  for update;
 
-  if v_qty is null or v_qty < 0 then
+  if v_current is null then
+    raise exception 'inventory_apply_delta: ledger row missing after upsert';
+  end if;
+
+  v_new := round((v_current + p_delta)::numeric, 3);
+
+  if v_new < 0 then
     raise exception 'Insufficient stock for this sale (inventory would go negative).';
   end if;
+
+  update public.inventory
+  set
+    quantity_on_hand = v_new,
+    updated_at = now()
+  where product_id = p_product_id
+    and business_id = p_business_id;
 end;
 $$;
 
@@ -1658,3 +1671,632 @@ $$;
 
 revoke all on function public.get_top_products(date, date) from public;
 grant execute on function public.get_top_products(date, date) to authenticated;
+
+-- -----------------------------------------------------------------------------
+-- V3 foundation: customers + sales.customer_id + product_components
+-- -----------------------------------------------------------------------------
+create table if not exists public.customers (
+  id uuid primary key default gen_random_uuid(),
+  business_id uuid not null references public.businesses (id) on delete restrict,
+  name text not null,
+  phone text,
+  address text,
+  deleted_at timestamptz,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
+create index if not exists customers_business_id_idx on public.customers (business_id);
+create index if not exists customers_phone_idx on public.customers (phone);
+
+create unique index if not exists customers_business_phone_active_uidx
+  on public.customers (business_id, phone)
+  where deleted_at is null and phone is not null and btrim(phone) <> '';
+
+drop trigger if exists set_customers_updated_at on public.customers;
+create trigger set_customers_updated_at
+before update on public.customers
+for each row
+execute function public.set_current_timestamp_updated_at();
+
+alter table public.customers enable row level security;
+
+drop policy if exists "customers_select_active" on public.customers;
+create policy "customers_select_active"
+  on public.customers
+  for select
+  using (
+    business_id = public.current_business_id()
+    and deleted_at is null
+  );
+
+drop policy if exists "customers_insert" on public.customers;
+create policy "customers_insert"
+  on public.customers
+  for insert
+  with check (business_id = public.current_business_id());
+
+drop policy if exists "customers_update" on public.customers;
+create policy "customers_update"
+  on public.customers
+  for update
+  using (
+    business_id = public.current_business_id()
+    and deleted_at is null
+  )
+  with check (business_id = public.current_business_id());
+
+alter table public.sales
+  add column if not exists customer_id uuid references public.customers (id) on delete restrict;
+
+create index if not exists sales_customer_id_idx on public.sales (customer_id);
+
+create table if not exists public.product_components (
+  id uuid primary key default gen_random_uuid(),
+  product_id uuid not null references public.products (id) on delete cascade,
+  inventory_item_id uuid not null references public.inventory_items (id) on delete restrict,
+  quantity_per_unit numeric(10, 3) not null check (quantity_per_unit > 0),
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  unique (product_id, inventory_item_id)
+);
+
+create index if not exists product_components_product_id_idx on public.product_components (product_id);
+create index if not exists product_components_inventory_item_id_idx on public.product_components (inventory_item_id);
+
+drop trigger if exists set_product_components_updated_at on public.product_components;
+create trigger set_product_components_updated_at
+before update on public.product_components
+for each row
+execute function public.set_current_timestamp_updated_at();
+
+alter table public.product_components enable row level security;
+
+drop policy if exists "product_components_select" on public.product_components;
+create policy "product_components_select"
+  on public.product_components
+  for select
+  using (
+    exists (
+      select 1
+      from public.products p
+      where p.id = product_components.product_id
+        and p.business_id = public.current_business_id()
+        and p.deleted_at is null
+    )
+  );
+
+drop policy if exists "product_components_insert" on public.product_components;
+create policy "product_components_insert"
+  on public.product_components
+  for insert
+  with check (
+    exists (
+      select 1
+      from public.products p
+      join public.inventory_items ii on ii.id = product_components.inventory_item_id
+      where p.id = product_components.product_id
+        and p.business_id = public.current_business_id()
+        and p.deleted_at is null
+        and ii.business_id = p.business_id
+    )
+  );
+
+drop policy if exists "product_components_update" on public.product_components;
+create policy "product_components_update"
+  on public.product_components
+  for update
+  using (
+    exists (
+      select 1
+      from public.products p
+      where p.id = product_components.product_id
+        and p.business_id = public.current_business_id()
+        and p.deleted_at is null
+    )
+  )
+  with check (
+    exists (
+      select 1
+      from public.products p
+      join public.inventory_items ii on ii.id = product_components.inventory_item_id
+      where p.id = product_components.product_id
+        and p.business_id = public.current_business_id()
+        and p.deleted_at is null
+        and ii.business_id = p.business_id
+    )
+  );
+
+drop policy if exists "product_components_delete" on public.product_components;
+create policy "product_components_delete"
+  on public.product_components
+  for delete
+  using (
+    exists (
+      select 1
+      from public.products p
+      where p.id = product_components.product_id
+        and p.business_id = public.current_business_id()
+        and p.deleted_at is null
+    )
+  );
+
+-- -----------------------------------------------------------------------------
+-- V3 save_sale/update_sale: customer auto-link + component stock deltas
+-- -----------------------------------------------------------------------------
+create or replace function public.save_sale(
+  p_date date,
+  p_customer_name text,
+  p_payment_mode text,
+  p_notes text,
+  p_lines jsonb,
+  p_customer_phone text default null,
+  p_customer_address text default null,
+  p_sale_type text default null
+)
+returns jsonb
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_bid uuid;
+  v_sale_id uuid;
+  v_elem jsonb;
+  v_product_id uuid;
+  v_qty numeric;
+  v_sale_price numeric;
+  v_mrp numeric;
+  v_cost numeric;
+  v_vs_mrp numeric;
+  v_line_profit numeric;
+  v_total_amount numeric := 0;
+  v_total_cost numeric := 0;
+  v_line_rev numeric;
+  v_line_cost numeric;
+  v_customer_phone text;
+  v_customer_name text;
+  v_customer_address text;
+  v_customer_id uuid;
+  r_component record;
+  v_component_delta numeric;
+  v_component_stock numeric;
+begin
+  if auth.uid() is null then
+    raise exception 'Not authenticated';
+  end if;
+  v_bid := public.current_business_id();
+  if v_bid is null then
+    raise exception 'No business context';
+  end if;
+  if p_payment_mode is null or p_payment_mode not in ('cash', 'online') then
+    raise exception 'Invalid payment_mode';
+  end if;
+  if p_sale_type is not null and p_sale_type not in ('B2C', 'B2B', 'B2B2C') then
+    raise exception 'Invalid sale_type';
+  end if;
+  if p_lines is null or jsonb_typeof(p_lines) <> 'array' or jsonb_array_length(p_lines) = 0 then
+    raise exception 'At least one line item required';
+  end if;
+
+  v_customer_phone := nullif(trim(coalesce(p_customer_phone, '')), '');
+  v_customer_name := coalesce(nullif(trim(coalesce(p_customer_name, '')), ''), 'Customer');
+  v_customer_address := nullif(trim(coalesce(p_customer_address, '')), '');
+
+  if v_customer_phone is not null then
+    select c.id into v_customer_id
+    from public.customers c
+    where c.business_id = v_bid
+      and c.phone = v_customer_phone
+      and c.deleted_at is null
+    limit 1;
+
+    if v_customer_id is null then
+      insert into public.customers (business_id, name, phone, address)
+      values (v_bid, v_customer_name, v_customer_phone, v_customer_address)
+      returning id into v_customer_id;
+    else
+      update public.customers
+      set
+        name = v_customer_name,
+        address = coalesce(v_customer_address, address)
+      where id = v_customer_id
+        and business_id = v_bid;
+    end if;
+  end if;
+
+  insert into public.sales (
+    business_id,
+    customer_id,
+    date,
+    customer_name,
+    customer_phone,
+    customer_address,
+    sale_type,
+    payment_mode,
+    total_amount,
+    total_cost,
+    total_profit,
+    notes
+  ) values (
+    v_bid,
+    v_customer_id,
+    p_date,
+    nullif(trim(coalesce(p_customer_name, '')), ''),
+    v_customer_phone,
+    v_customer_address,
+    p_sale_type,
+    p_payment_mode,
+    0, 0, 0,
+    nullif(trim(p_notes), '')
+  )
+  returning id into v_sale_id;
+
+  for v_elem in
+    select elem from jsonb_array_elements(p_lines) with ordinality as t(elem, _ord)
+  loop
+    v_product_id := (v_elem->>'product_id')::uuid;
+    v_qty := (v_elem->>'quantity')::numeric;
+    v_sale_price := (v_elem->>'sale_price')::numeric;
+    if v_qty is null or v_qty <= 0 then
+      raise exception 'Invalid quantity';
+    end if;
+    if v_sale_price is null or v_sale_price < 0 then
+      raise exception 'Invalid sale_price';
+    end if;
+
+    select p.mrp, p.cost_price into v_mrp, v_cost
+    from public.products p
+    where p.id = v_product_id
+      and p.business_id = v_bid
+      and p.deleted_at is null;
+    if not found then
+      raise exception 'Product not found or inactive';
+    end if;
+
+    perform public.inventory_apply_delta(v_bid, v_product_id, -v_qty);
+
+    for r_component in
+      select pc.inventory_item_id, pc.quantity_per_unit
+      from public.product_components pc
+      where pc.product_id = v_product_id
+    loop
+      v_component_delta := round((r_component.quantity_per_unit * v_qty)::numeric, 3);
+      update public.inventory_items ii
+      set
+        current_stock = round((ii.current_stock - v_component_delta)::numeric, 3),
+        updated_at = now()
+      where ii.id = r_component.inventory_item_id
+        and ii.business_id = v_bid
+      returning current_stock into v_component_stock;
+
+      if v_component_stock is null then
+        raise exception 'Component inventory item not found for this business';
+      end if;
+      if v_component_stock < 0 then
+        raise exception 'Insufficient component stock for this sale';
+      end if;
+    end loop;
+
+    v_vs_mrp := round((v_sale_price - v_mrp)::numeric, 2);
+    v_line_profit := round(((v_sale_price - v_cost) * v_qty)::numeric, 2);
+    v_line_rev := round((v_sale_price * v_qty)::numeric, 2);
+    v_line_cost := round((v_cost * v_qty)::numeric, 2);
+    v_total_amount := v_total_amount + v_line_rev;
+    v_total_cost := v_total_cost + v_line_cost;
+
+    insert into public.sale_items (
+      sale_id, product_id, quantity, sale_price, cost_price_snapshot, mrp_snapshot, vs_mrp, profit
+    ) values (
+      v_sale_id, v_product_id, v_qty, v_sale_price, v_cost, v_mrp, v_vs_mrp, v_line_profit
+    );
+  end loop;
+
+  update public.sales
+  set
+    total_amount = round(v_total_amount, 2),
+    total_cost = round(v_total_cost, 2),
+    total_profit = round(v_total_amount - v_total_cost, 2)
+  where id = v_sale_id
+    and business_id = v_bid;
+
+  return jsonb_build_object(
+    'sale_id', v_sale_id,
+    'total_amount', (select total_amount from public.sales where id = v_sale_id),
+    'total_cost', (select total_cost from public.sales where id = v_sale_id),
+    'total_profit', (select total_profit from public.sales where id = v_sale_id)
+  );
+end;
+$$;
+
+revoke all on function public.save_sale(date, text, text, text, jsonb, text, text, text) from public;
+grant execute on function public.save_sale(date, text, text, text, jsonb, text, text, text) to authenticated;
+
+create or replace function public.update_sale(
+  p_sale_id uuid,
+  p_date date,
+  p_customer_name text,
+  p_payment_mode text,
+  p_notes text,
+  p_lines jsonb,
+  p_customer_phone text default null,
+  p_customer_address text default null,
+  p_sale_type text default null
+)
+returns jsonb
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_bid uuid;
+  r record;
+  v_elem jsonb;
+  v_product_id uuid;
+  v_qty numeric;
+  v_sale_price numeric;
+  v_mrp numeric;
+  v_cost numeric;
+  v_vs_mrp numeric;
+  v_line_profit numeric;
+  v_total_amount numeric := 0;
+  v_total_cost numeric := 0;
+  v_line_rev numeric;
+  v_line_cost numeric;
+  v_customer_phone text;
+  v_customer_name text;
+  v_customer_address text;
+  v_customer_id uuid;
+  r_component record;
+  v_component_delta numeric;
+  v_component_stock numeric;
+begin
+  if auth.uid() is null then
+    raise exception 'Not authenticated';
+  end if;
+  v_bid := public.current_business_id();
+  if v_bid is null then
+    raise exception 'No business context';
+  end if;
+  if not exists (
+    select 1 from public.sales s
+    where s.id = p_sale_id and s.business_id = v_bid and s.deleted_at is null
+  ) then
+    raise exception 'Sale not found, archived, or access denied';
+  end if;
+  if p_payment_mode is null or p_payment_mode not in ('cash', 'online') then
+    raise exception 'Invalid payment_mode';
+  end if;
+  if p_sale_type is not null and p_sale_type not in ('B2C', 'B2B', 'B2B2C') then
+    raise exception 'Invalid sale_type';
+  end if;
+  if p_lines is null or jsonb_typeof(p_lines) <> 'array' or jsonb_array_length(p_lines) = 0 then
+    raise exception 'At least one line item required';
+  end if;
+
+  for r in
+    select si.product_id, si.quantity
+    from public.sale_items si
+    where si.sale_id = p_sale_id
+  loop
+    perform public.inventory_apply_delta(v_bid, r.product_id, r.quantity);
+    for r_component in
+      select pc.inventory_item_id, pc.quantity_per_unit
+      from public.product_components pc
+      where pc.product_id = r.product_id
+    loop
+      v_component_delta := round((r_component.quantity_per_unit * r.quantity)::numeric, 3);
+      update public.inventory_items ii
+      set
+        current_stock = round((ii.current_stock + v_component_delta)::numeric, 3),
+        updated_at = now()
+      where ii.id = r_component.inventory_item_id
+        and ii.business_id = v_bid;
+    end loop;
+  end loop;
+
+  delete from public.sale_items where sale_id = p_sale_id;
+
+  v_customer_phone := nullif(trim(coalesce(p_customer_phone, '')), '');
+  v_customer_name := coalesce(nullif(trim(coalesce(p_customer_name, '')), ''), 'Customer');
+  v_customer_address := nullif(trim(coalesce(p_customer_address, '')), '');
+  v_customer_id := null;
+  if v_customer_phone is not null then
+    select c.id into v_customer_id
+    from public.customers c
+    where c.business_id = v_bid
+      and c.phone = v_customer_phone
+      and c.deleted_at is null
+    limit 1;
+
+    if v_customer_id is null then
+      insert into public.customers (business_id, name, phone, address)
+      values (v_bid, v_customer_name, v_customer_phone, v_customer_address)
+      returning id into v_customer_id;
+    else
+      update public.customers
+      set
+        name = v_customer_name,
+        address = coalesce(v_customer_address, address)
+      where id = v_customer_id
+        and business_id = v_bid;
+    end if;
+  end if;
+
+  update public.sales
+  set
+    customer_id = v_customer_id,
+    date = p_date,
+    customer_name = nullif(trim(coalesce(p_customer_name, '')), ''),
+    customer_phone = v_customer_phone,
+    customer_address = v_customer_address,
+    sale_type = p_sale_type,
+    payment_mode = p_payment_mode,
+    notes = nullif(trim(coalesce(p_notes, '')), ''),
+    total_amount = 0,
+    total_cost = 0,
+    total_profit = 0
+  where id = p_sale_id
+    and business_id = v_bid;
+
+  for v_elem in
+    select elem from jsonb_array_elements(p_lines) with ordinality as t(elem, _ord)
+  loop
+    v_product_id := (v_elem->>'product_id')::uuid;
+    v_qty := (v_elem->>'quantity')::numeric;
+    v_sale_price := (v_elem->>'sale_price')::numeric;
+    if v_qty is null or v_qty <= 0 then
+      raise exception 'Invalid quantity';
+    end if;
+    if v_sale_price is null or v_sale_price < 0 then
+      raise exception 'Invalid sale_price';
+    end if;
+
+    select p.mrp, p.cost_price into v_mrp, v_cost
+    from public.products p
+    where p.id = v_product_id
+      and p.business_id = v_bid
+      and p.deleted_at is null;
+    if not found then
+      raise exception 'Product not found or inactive';
+    end if;
+
+    perform public.inventory_apply_delta(v_bid, v_product_id, -v_qty);
+    for r_component in
+      select pc.inventory_item_id, pc.quantity_per_unit
+      from public.product_components pc
+      where pc.product_id = v_product_id
+    loop
+      v_component_delta := round((r_component.quantity_per_unit * v_qty)::numeric, 3);
+      update public.inventory_items ii
+      set
+        current_stock = round((ii.current_stock - v_component_delta)::numeric, 3),
+        updated_at = now()
+      where ii.id = r_component.inventory_item_id
+        and ii.business_id = v_bid
+      returning current_stock into v_component_stock;
+
+      if v_component_stock is null then
+        raise exception 'Component inventory item not found for this business';
+      end if;
+      if v_component_stock < 0 then
+        raise exception 'Insufficient component stock for this sale';
+      end if;
+    end loop;
+
+    v_vs_mrp := round((v_sale_price - v_mrp)::numeric, 2);
+    v_line_profit := round(((v_sale_price - v_cost) * v_qty)::numeric, 2);
+    v_line_rev := round((v_sale_price * v_qty)::numeric, 2);
+    v_line_cost := round((v_cost * v_qty)::numeric, 2);
+    v_total_amount := v_total_amount + v_line_rev;
+    v_total_cost := v_total_cost + v_line_cost;
+
+    insert into public.sale_items (
+      sale_id, product_id, quantity, sale_price, cost_price_snapshot, mrp_snapshot, vs_mrp, profit
+    ) values (
+      p_sale_id, v_product_id, v_qty, v_sale_price, v_cost, v_mrp, v_vs_mrp, v_line_profit
+    );
+  end loop;
+
+  update public.sales
+  set
+    total_amount = round(v_total_amount, 2),
+    total_cost = round(v_total_cost, 2),
+    total_profit = round(v_total_amount - v_total_cost, 2)
+  where id = p_sale_id
+    and business_id = v_bid;
+
+  return jsonb_build_object(
+    'sale_id', p_sale_id,
+    'total_amount', (select total_amount from public.sales where id = p_sale_id),
+    'total_cost', (select total_cost from public.sales where id = p_sale_id),
+    'total_profit', (select total_profit from public.sales where id = p_sale_id)
+  );
+end;
+$$;
+
+revoke all on function public.update_sale(uuid, date, text, text, text, jsonb, text, text, text) from public;
+grant execute on function public.update_sale(uuid, date, text, text, text, jsonb, text, text, text) to authenticated;
+
+-- -----------------------------------------------------------------------------
+-- V3 Dashboard RPC: monthly performance (zero-filled)
+-- -----------------------------------------------------------------------------
+create or replace function public.get_monthly_performance(
+  p_from date,
+  p_to date
+)
+returns table (
+  month int,
+  year int,
+  revenue numeric(12, 2),
+  expenses numeric(12, 2),
+  profit numeric(12, 2)
+)
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_bid uuid;
+  v_start_month date;
+  v_end_month date;
+begin
+  if auth.uid() is null then
+    raise exception 'Not authenticated';
+  end if;
+  if p_from is null or p_to is null then
+    raise exception 'Date range required';
+  end if;
+  if p_from > p_to then
+    raise exception 'Invalid date range (from > to)';
+  end if;
+
+  v_bid := public.current_business_id();
+  if v_bid is null then
+    raise exception 'No business context';
+  end if;
+
+  v_start_month := date_trunc('month', p_from)::date;
+  v_end_month := date_trunc('month', p_to)::date;
+
+  return query
+  with month_series as (
+    select generate_series(v_start_month::timestamp, v_end_month::timestamp, interval '1 month')::date as month_start
+  ),
+  sales_monthly as (
+    select
+      date_trunc('month', s.date::timestamp)::date as month_start,
+      sum(s.total_amount)::numeric(12, 2) as revenue
+    from public.sales s
+    where s.business_id = v_bid
+      and s.deleted_at is null
+      and s.date >= p_from
+      and s.date <= p_to
+    group by 1
+  ),
+  expenses_monthly as (
+    select
+      date_trunc('month', (e.date::date)::timestamp)::date as month_start,
+      sum(e.total_amount)::numeric(12, 2) as expenses
+    from public.expenses e
+    where e.business_id = v_bid
+      and e.deleted_at is null
+      and (e.date::date) >= p_from
+      and (e.date::date) <= p_to
+    group by 1
+  )
+  select
+    extract(month from ms.month_start)::int as month,
+    extract(year from ms.month_start)::int as year,
+    coalesce(sm.revenue, 0)::numeric(12, 2) as revenue,
+    coalesce(em.expenses, 0)::numeric(12, 2) as expenses,
+    (coalesce(sm.revenue, 0) - coalesce(em.expenses, 0))::numeric(12, 2) as profit
+  from month_series ms
+  left join sales_monthly sm on sm.month_start = ms.month_start
+  left join expenses_monthly em on em.month_start = ms.month_start
+  order by ms.month_start;
+end;
+$$;
+
+revoke all on function public.get_monthly_performance(date, date) from public;
+grant execute on function public.get_monthly_performance(date, date) to authenticated;
