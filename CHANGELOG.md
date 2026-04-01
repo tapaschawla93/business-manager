@@ -78,6 +78,7 @@ All notable changes to this project are documented here. Format loosely follows 
 
 ### Fixed
 
+- **Products page:** removed `.is('deleted_at', null)` on **`inventory_items`** in component-picker load — table has **no** `deleted_at` column; fixes live PostgREST error / red toast on `/products`.
 - **Customer backfill + linking:** migration **`20260401230000_v3_backfill_customers_inventory_delta_fix.sql`** creates missing `customers` from legacy `sales.customer_phone` and fills missing `sales.customer_id`.
 - **Inventory sale errors:** `inventory_apply_delta` now validates projected stock before update, so insufficient stock raises a clear business error instead of `inventory_quantity_on_hand_check`.
 - **Excel backup completeness:** backup workbook now exports `inventory_items`, `inventory` ledger, and `customers` reliably; query failures are surfaced instead of silently producing partial files.

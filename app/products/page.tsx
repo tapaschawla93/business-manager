@@ -79,10 +79,10 @@ export default function ProductsPage() {
 
   const loadInventoryOptions = useCallback(async () => {
     const supabase = getSupabaseClient();
+    // `inventory_items` has no `deleted_at` (schema uses hard delete on /inventory); do not filter it.
     const { data, error: invErr } = await supabase
       .from('inventory_items')
       .select('id, name')
-      .is('deleted_at', null)
       .order('name', { ascending: true });
     if (invErr) {
       toast.error(invErr.message);
