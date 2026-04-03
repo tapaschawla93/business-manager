@@ -161,7 +161,6 @@ create table if not exists public.products (
   deleted_at timestamptz,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now(),
-  constraint products_business_id_name_key unique (business_id, name),
   constraint products_mrp_nonneg check (mrp >= 0),
   constraint products_cost_price_nonneg check (cost_price >= 0),
   constraint products_tax_pct_range check (
@@ -170,6 +169,11 @@ create table if not exists public.products (
 );
 
 create index if not exists products_business_id_idx on public.products (business_id);
+
+-- Unique name per business among active products only (archived rows may reuse names).
+create unique index if not exists products_business_id_name_active_uidx
+  on public.products (business_id, name)
+  where deleted_at is null;
 
 drop trigger if exists set_products_updated_at on public.products;
 create trigger set_products_updated_at
@@ -579,6 +583,14 @@ begin
   end if;
   if p_delta = 0 then
     return;
+  end if;
+
+  if p_delta < 0 then
+    if exists (
+      select 1 from public.product_components pc where pc.product_id = p_product_id
+    ) then
+      return;
+    end if;
   end if;
 
   insert into public.inventory (business_id, product_id, quantity_on_hand)
@@ -1144,6 +1156,8 @@ as $$
 declare
   v_bid uuid;
   r record;
+  r_component record;
+  v_component_delta numeric;
 begin
   if auth.uid() is null then
     raise exception 'Not authenticated';
@@ -1170,7 +1184,25 @@ begin
     from public.sale_items si
     where si.sale_id = p_sale_id
   loop
-    perform public.inventory_apply_delta(v_bid, r.product_id, r.quantity);
+    if not exists (
+      select 1 from public.product_components pc where pc.product_id = r.product_id
+    ) then
+      perform public.inventory_apply_delta(v_bid, r.product_id, r.quantity);
+    end if;
+
+    for r_component in
+      select pc.inventory_item_id, pc.quantity_per_unit
+      from public.product_components pc
+      where pc.product_id = r.product_id
+    loop
+      v_component_delta := round((r_component.quantity_per_unit * r.quantity)::numeric, 3);
+      update public.inventory_items ii
+      set
+        current_stock = round((ii.current_stock + v_component_delta)::numeric, 3),
+        updated_at = now()
+      where ii.id = r_component.inventory_item_id
+        and ii.business_id = v_bid;
+    end loop;
   end loop;
 
   update public.sales
@@ -1954,7 +1986,11 @@ begin
       raise exception 'Product not found or inactive';
     end if;
 
-    perform public.inventory_apply_delta(v_bid, v_product_id, -v_qty);
+    if not exists (
+      select 1 from public.product_components pc where pc.product_id = v_product_id
+    ) then
+      perform public.inventory_apply_delta(v_bid, v_product_id, -v_qty);
+    end if;
 
     for r_component in
       select pc.inventory_item_id, pc.quantity_per_unit
@@ -2079,7 +2115,12 @@ begin
     from public.sale_items si
     where si.sale_id = p_sale_id
   loop
-    perform public.inventory_apply_delta(v_bid, r.product_id, r.quantity);
+    if not exists (
+      select 1 from public.product_components pc where pc.product_id = r.product_id
+    ) then
+      perform public.inventory_apply_delta(v_bid, r.product_id, r.quantity);
+    end if;
+
     for r_component in
       select pc.inventory_item_id, pc.quantity_per_unit
       from public.product_components pc
@@ -2161,7 +2202,12 @@ begin
       raise exception 'Product not found or inactive';
     end if;
 
-    perform public.inventory_apply_delta(v_bid, v_product_id, -v_qty);
+    if not exists (
+      select 1 from public.product_components pc where pc.product_id = v_product_id
+    ) then
+      perform public.inventory_apply_delta(v_bid, v_product_id, -v_qty);
+    end if;
+
     for r_component in
       select pc.inventory_item_id, pc.quantity_per_unit
       from public.product_components pc

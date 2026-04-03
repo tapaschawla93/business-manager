@@ -284,6 +284,8 @@
 
 - **`public.inventory`**: Ledger per product; **sales** and **expenses** automation adjusts **`quantity_on_hand`** here (not `current_stock` — that name is on **`inventory_items`** only).
 - **`public.inventory_items`**: Operator-facing lines (display name, unit, **`unit_cost`**, **`reorder_level`**, optional **`product_id`**). Rows **without** **`product_id`** do not receive sale/expense stock deltas.
+- **No `deleted_at` on `inventory_items`:** unlike **`products`** / **`sales`**, this table uses **hard delete** from **`/inventory`** (no soft-archive column). **Do not** use **`.is('deleted_at', null)`** in PostgREST queries — Postgres error *column … does not exist* + red toast (fixed on Products component-picker load).
+- **Component stock vs PRD “warn + allow”:** `inventory_items.current_stock` has **`CHECK (current_stock >= 0)`** and sync to **`public.inventory`** enforces non-negative ledger; **overselling components** stays **RPC-blocked**. Sales UI adds **warnings** only (`saleComponentHints` + toasts).
 - **Sync**: When **`product_id`** is set, triggers keep **`inventory_items.current_stock`** and **`public.inventory.quantity_on_hand`** aligned (bidirectional; loop avoided by comparing old/new with **`IS DISTINCT FROM`**). Sales must call **`inventory_apply_delta`** inside **`save_sale`** so the ledger moves; migration **`20260329103000_save_sale_restore_inventory_delta.sql`** restores that if an older **`save_sale`** rewrite dropped it.
 
 ### Level 2
@@ -312,7 +314,7 @@
 
 #### Level 3
 
-- **Transactions**: failed **`inventory_apply_delta`** (e.g. negative stock) aborts **`save_sale`** entirely.
+- **Transactions**: failed **`inventory_apply_delta`** (e.g. negative stock) aborts **`save_sale`** entirely. **BOM products**: **`inventory_apply_delta`** treats **negative** deltas as a **no-op** when **`product_components`** exists for that **`product_id`** (assembly stock is on **`inventory_items`** only; migration **`20260402110000`**).
 - **Loop control**: **`IS DISTINCT FROM`** on pull avoids redundant **`inventory_items`** updates when the value is already aligned.
 - **Alternatives**: app-only sync (weaker if SQL/RPC bypasses app), single-table + views (simpler reads, bigger schema change).
 
@@ -404,8 +406,9 @@
 
 - **What**: **PostgREST** (Supabase’s REST layer) exposes Postgres **functions** as `/rpc/...` only after they exist in the DB **and** appear in PostgREST’s **schema cache**. New migrations that `CREATE OR REPLACE` **`archive_sale`** / **`update_sale`** do nothing for the browser until that project has **applied** the migration and the API has **reloaded** its schema (often automatic; sometimes you nudge it).
 - **Why errors look weird**: “**Could not find the function … in the schema cache**” means the **API** doesn’t know that signature yet—not necessarily that your repo is wrong. **`PGRST202`** is the usual code.
-- **`archive_sale` vs `update_sale`**: **`archive_sale`** soft-deletes the **`sales`** header and **restores stock** per **`sale_items`** line (positive **`inventory_apply_delta`**). **`update_sale`** **replaces** header + lines in one transaction (restore old quantities, delete lines, re-insert, apply new deltas)—same trust model as **`save_sale`**.
-- **Client fallback** (**`lib/archiveSale.ts`**): If **`archive_sale`** fails with a **missing-RPC** pattern, the app can **approximate** archive by calling **`inventory_apply_delta_for_tenant`** per line then **`UPDATE sales SET deleted_at`**. **Editing** a sale still **requires** **`update_sale`** on the server—**`sale_items`** has **no** client INSERT/DELETE policies by design (**`20250326120000_foundation_soft_delete_sales_rpc.sql`**).
+- **`archive_sale` vs `update_sale`**: **`archive_sale`** soft-deletes the **`sales`** header and **restores stock** per **`sale_items`** line: **product ledger** via **`inventory_apply_delta`** only when the product has **no** **`product_components`** rows; **component** stock is always adjusted on **`inventory_items`**. **`update_sale`** **replaces** header + lines in one transaction (restore old quantities, delete lines, re-insert, apply new deltas)—same BOM vs ledger split as **`save_sale`** (migration **`20260402100000`**).
+- **Product names:** Uniqueness is **among active products only** (**`products_business_id_name_active_uidx`**, **`deleted_at IS NULL`**); archived SKUs do not block reusing the same display name.
+- **Client fallback** (**`lib/archiveSale.ts`**): If **`archive_sale`** fails with a **missing-RPC** pattern, the app **approximates** archive: lines **without** a BOM use **`inventory_apply_delta_for_tenant`**; lines **with** **`product_components`** bump **`inventory_items.current_stock`** by **`quantity_per_unit × qty`**, then **`UPDATE sales SET deleted_at`**. **Editing** a sale still **requires** **`update_sale`** on the server—**`sale_items`** has **no** client INSERT/DELETE policies by design (**`20250326120000_foundation_soft_delete_sales_rpc.sql`**).
 
 ### Level 2 — Mechanics, pitfalls, debugging
 
@@ -418,8 +421,34 @@
 
 ### Level 3 — Production notes
 
-- **Detector breadth**: **`isPostgrestMissingRpcError`** matches generic substrings (**e.g. `does not exist`**); rare false positives could enter the fallback—tighten if you see odd behavior.
+- **Detector**: **`isPostgrestMissingRpcError`** uses PostgREST/Postgres codes (**`PGRST202`**, **`42883`**) plus narrow message checks (**schema cache** + function/procedure, or **function** + **does not exist**).
 - **Senior lens**: Prefer **one SECURITY DEFINER RPC** per multi-step mutation (**atomic**, consistent with **`save_sale`**). Client fallbacks are **product continuity**, not the architectural end state; **`update_sale`** cannot be replicated from the browser without widening **`sale_items`** RLS (usually a bad trade).
+
+---
+
+## Sales, BOM, and inventory — dual stock model (ledger vs components)
+
+### Level 1 — Core concept
+
+- **What**: This app tracks **sellable SKU stock** in **`public.inventory`** (**`quantity_on_hand`** per **`product_id`**) and **raw / component stock** in **`inventory_items`** (**`current_stock`** per manual line, optionally linked to a product). **BOM** rows in **`product_components`** say: “selling one unit of product **P** consumes **N** of inventory item **I**.”
+- **Why it’s easy to get wrong**: Operators stock **only** components on **Inventory**, but the **original** sale path always tried to decrement **`public.inventory`** for **P** first—so they saw **“Insufficient stock…”** even when components were fine. That message is about the **product ledger**, not component lines.
+- **When to use BOM**: Finished goods you **assemble from parts** (kits, gift bundles, food components) where you **don’t** maintain finished-goods quantity in the ledger—only parts.
+- **Fit**: **`save_sale` / `update_sale`** (migrations **`20260402100000`**+) skip **`inventory_apply_delta`** for **P** when **P** has any **`product_components`**; **`inventory_apply_delta`** itself also **no-ops negative deltas** for those products (**`20260402110000`**) so older RPC bodies still behave. Component deduction stays **`UPDATE inventory_items`**.
+
+### Level 2 — How it works
+
+- **Mechanics**: For each sale line, the server loads **`product_components`** for **`product_id`**. If **no rows** → **`inventory_apply_delta(business, product, -qty)`** (classic sellable SKU). If **rows exist** → skip that ledger decrement; loop components and subtract **`quantity_per_unit × qty`** from **`inventory_items.current_stock`**, with **non-negative** enforcement there.
+- **Triggers**: **`inventory_items_push_to_ledger`** runs when **`inventory_items.product_id`** is set—it **mirrors** that row’s **`current_stock`** into **`public.inventory`** for that product. **Unlinked** component rows (**`product_id` null**) do **not** push—typical for parts that aren’t the sellable SKU.
+- **Product names**: Global **`UNIQUE (business_id, name)`** included **archived** products, so “duplicate name” errors appeared with **no visible row**. **Partial unique index** (**`WHERE deleted_at IS NULL`**) fixes that without hard-deleting history.
+- **Client hints**: **`fetchComponentShortfallsForLines`** projects shortage **per component**; it must **aggregate** demand across **all lines** (same product twice or shared components) before comparing to **`current_stock`**, or warnings lie.
+- **Debug**: Confirm **`product_components`** rows in DB; confirm migrations through **`20260402110000`** on the **same** Supabase project as the app; read **`pg_get_functiondef('inventory_apply_delta…')`** if unsure what’s deployed.
+
+### Level 3 — Deep dive
+
+- **Tradeoff (hybrid SKUs)**: If a product **both** has a BOM **and** you keep **finished** stock in **`public.inventory`**, skipping ledger on sale means **ledger no longer tracks** finished units—you’re “components-only” for that SKU. That’s an intentional product rule here; a flag or separate product split would be needed for true hybrid tracking.
+- **Archive / edit symmetry**: **`archive_sale`** and **`update_sale`** must **restore** component **`inventory_items`** and only **restore** product ledger when **no BOM**—otherwise you double-count or leak stock. Client **`archiveSaleWithClientFallback`** mirrors that split but is **not transactional**.
+- **Performance**: Shortfall aggregation is **O(lines × BOM rows)** client-side; fine at current volumes. **`fetchCustomersList`**-style merges for the sales picker are heavier—acceptable until row counts explode.
+- **Senior lens**: **Inventory is two systems** (ledger + items) **plus** triggers that keep subsets in sync—bugs often show up as “wrong error message” (ledger) vs “real” constraint (components). Teach operators **which screen** is authoritative for which SKU type, and treat **migration drift** as a first-class ops checklist (**`schema_migrations`**, **`migration list`**).
 
 ---
 

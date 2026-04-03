@@ -4,8 +4,28 @@ All notable changes to this project are documented here. Format loosely follows 
 
 ## [Unreleased]
 
+### Fixed
+
+- **Sales — component shortfall hint:** **`fetchComponentShortfallsForLines`** now **sums demand per `inventory_item_id`** across all lines (same product twice or shared components) before comparing to **`current_stock`**.
+- **Sales form:** **`submitInFlightRef`** prevents double submit; customer + component-count **`useEffect`** hooks use **cancelled** flags to avoid setState after unmount.
+- **`isPostgrestMissingRpcError`:** Narrower heuristics (codes **`PGRST202`** / **`42883`**, schema-cache + function wording) to reduce false “missing RPC” detection.
+- **`archiveSaleWithClientFallback`:** Returns **`usedClientFallback`**; archive success toast notes client path when the RPC was missing.
+- **Sales — customer picker:** Uses **`fetchCustomersList`** (same merge as **Customers**) so **walk-in / sales-only** contacts appear, not only rows in **`customers`**. **`CustomerPicker`** **`cmdk`** values include **`id`** so duplicate names do not collapse items.
+- **Products:** Duplicate-name errors when no visible row matched were caused by **archived** products still participating in **`UNIQUE (business_id, name)`**. Replaced with a **partial unique index** on active rows only (**`products_business_id_name_active_uidx`**, **`WHERE deleted_at IS NULL`**). Migration **`20260402100000_products_active_name_unique_bom_skip_product_ledger.sql`**; **`supabase/schema.sql`** aligned. Hard-deleting archived products is not required to reuse a name.
+- **Sales (BOM):** **`save_sale` / `update_sale`** always decremented **`public.inventory`** for the sellable product **before** components, so assembly-only SKUs (stock held on **component** `inventory_items`) hit **“Insufficient stock…”** even with enough components. **If `product_components` exists for that product**, the RPC **skips** **`inventory_apply_delta`** for that line and **only** deducts **`inventory_items`**. **`archive_sale`** now **restores component stock** and uses the same BOM vs ledger rule; **`lib/archiveSale.ts`** fallback matches.
+- **Sales (BOM) — belt-and-suspenders:** **`inventory_apply_delta`** now **returns without changing the ledger** when **`p_delta < 0`** and the product has **any** **`product_components`** row, so **older `save_sale` bodies** still deployed also allow assembly-only sales. Migration **`20260402110000_inventory_apply_delta_skip_bom_negative.sql`**; **`supabase/schema.sql`** aligned.
+- **Products:** **Insert** + failed **BOM** save left a row in **`products`** while the UI stayed in “add” mode → retry **Save** tried another **insert** and hit duplicate name. On component save failure after insert, **`editingId`** is set to the new **`id`** so the next save is an **update**. **`submitInFlightRef`** + **`try/finally`** keep **`saving`** consistent.
+
+### Changed
+
+- **`lib/saleRpcUserHint.ts`:** Insufficient **product ledger** errors append guidance (BOM vs stock-in / migrations).
+- **`docs/knowledgebase.md`:** **Sales, BOM, and inventory** section (ledger vs **`inventory_items`**, BOM skips, triggers, migration ops); **Sales RPCs** / missing-RPC detector wording aligned with code.
+
 ### Added
 
+- **Sales — prd.v3.5.2 / 5.3 / 5.4:** **`CustomerPicker`** (saved customers) on **`SalesForm`**; per-line **BOM hints** on **`ProductLineRow`** (`product_components` row count + “no BOM” copy). Pre-submit **`toast.warning`** when lines have **no BOM** (ledger-only stock) or **projected component shortfalls** (server still blocks oversell — `inventory_items` CHECK + RPC).
+- **`lib/queries/saleComponentHints.ts`:** `fetchProductComponentCounts`, `fetchComponentShortfallsForLines` for Sales UX.
+- **`components/CustomerPicker.tsx`:** combobox pattern aligned with **`VendorPicker`**.
 - **Customers module (`/customers`):** search + repeat-customer filter, order-history dialog, desktop/mobile row actions, and customer record lifecycle controls (**Edit**, **Delete**, **Create Record** for sales-only rows).
 - **Customers mobile list:** new accordion layout with per-row action menu to match other modules on small screens.
 - **Mobile row actions:** **Products**, **Inventory**, **Sales** — kebab with **Edit** + **Archive** / **Delete line**. **Vendors** / **Expenses** mobile kebab — **Archive** only (tap vendor name for detail; **Expenses** desktop table still has **Edit**). **`components/ui/dropdown-menu.tsx`** (Radix **DropdownMenu**).
@@ -23,7 +43,7 @@ All notable changes to this project are documented here. Format loosely follows 
 - **`lib/products/productMargin.ts`:** shared catalog **margin %** (MRP vs cost + tone classes) for **Products** table + **`ProductsMobileList`**.
 - **`components/mobile/MobileAccordion.tsx`:** `MobileAccordionChevron`, `MobileAccordionBody` (`contentId` → `id` + `role="region"`, `aria-controls` on row toggles).
 - **`SaleListLineDetail.id`:** `fetchSalesList` selects **`sale_items.id`**; mobile line blocks use stable React keys.
-- **Docs:** `docs/knowledgebase.md` — **Sales RPCs** (PostgREST schema cache, **`archive_sale`** / **`update_sale`**, client fallback, RLS + PATCH RETURNING); **Mobile polish** (accordion/`md` split, keys, `productById` map, margin helper, a11y); **client loader error UX** (toast + `cancelled` + `devError` for Supabase reference fetches).
+- **Docs:** `docs/knowledgebase.md` — **`inventory_items`** has **no** `deleted_at` (hard delete only); avoid PostgREST filters on that column. Also: **Sales RPCs** (PostgREST schema cache, **`archive_sale`** / **`update_sale`**, client fallback, RLS + PATCH RETURNING); **Mobile polish** (accordion/`md` split, keys, `productById` map, margin helper, a11y); **client loader error UX** (toast + `cancelled` + `devError` for Supabase reference fetches).
 - **Manual inventory (`inventory_items`):** `/inventory` page (list, edit dialog, product link, low-stock row tint, CSV template + bulk import, unlinked-save **AlertDialog**). Ledger **`public.inventory`** (`quantity_on_hand`); linked lines sync via DB triggers. Settings: inventory CSV template + upload. Nav **Inventory** last (`lib/nav.ts`, `Sidebar.tsx`). Migrations `20260328120000_inventory_items.sql`, `20260329103000_save_sale_restore_inventory_delta.sql`, `20260329120000_inventory_sync_triggers_security_definer.sql`; greenfield **`supabase/schema.sql`** §4c + **`inventory_apply_delta`** + **`save_sale`** stock step.
 - **`npm run dev:clean`:** `rm -rf .next && next dev` (fixes corrupt dev cache / missing chunk / “unstyled” UI when CSS 500s).
 - **`lib/productLookupMap.ts`:** name / `name::variant` index; **ambiguous** duplicate catalog keys → failed CSV row (inventory + sales Settings bulk + sales page import).

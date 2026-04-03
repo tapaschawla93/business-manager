@@ -28,6 +28,22 @@ import { useBusinessSession } from '@/lib/auth/useBusinessSession';
 import { ProductsMobileList } from '@/app/products/components/ProductsMobileList';
 import { getProductMargin, productMarginToneClass } from '@/lib/products/productMargin';
 
+function formatProductSaveError(message: string): string {
+  const m = message.toLowerCase();
+  if (
+    message.includes('products_business_id_name_key') ||
+    message.includes('products_business_id_name_active_uidx') ||
+    (message.includes('duplicate key') && m.includes('products'))
+  ) {
+    return (
+      'A product with this name already exists among active products. ' +
+      'If you already saved once, click Save again to update and attach components, or pick another name. ' +
+      'You can reuse a name if the only other row with that name is archived.'
+    );
+  }
+  return message;
+}
+
 /**
  * V1 Product Repository: CRUD for tenant-scoped products.
  * business_id from profiles; RLS enforces isolation.
@@ -56,6 +72,7 @@ export default function ProductsPage() {
   const [searchQuery, setSearchQuery] = useState('');
   const [importing, setImporting] = useState(false);
   const productsUploadRef = useRef<HTMLInputElement | null>(null);
+  const submitInFlightRef = useRef(false);
   const [inventoryOptions, setInventoryOptions] = useState<Array<{ id: string; name: string }>>([]);
   const [componentsDraft, setComponentsDraft] = useState<ComponentDraft[]>([]);
 
@@ -241,69 +258,84 @@ export default function ProductsPage() {
       return;
     }
 
-    const supabase = getSupabaseClient();
+    if (submitInFlightRef.current) return;
+    submitInFlightRef.current = true;
     setSaving(true);
     setError(null);
 
-    if (editingId) {
-      const { error: upErr } = await supabase
-        .from('products')
-        .update({
-          name: payload.name,
-          variant: payload.variant,
-          category: payload.category,
-          mrp: payload.mrp,
-          cost_price: payload.cost_price,
-          hsn_code: payload.hsn_code,
-          tax_pct: payload.tax_pct,
-        })
-        .eq('id', editingId)
-        .eq('business_id', businessId)
-        .is('deleted_at', null);
+    const supabase = getSupabaseClient();
+    try {
+      if (editingId) {
+        const { error: upErr } = await supabase
+          .from('products')
+          .update({
+            name: payload.name,
+            variant: payload.variant,
+            category: payload.category,
+            mrp: payload.mrp,
+            cost_price: payload.cost_price,
+            hsn_code: payload.hsn_code,
+            tax_pct: payload.tax_pct,
+          })
+          .eq('id', editingId)
+          .eq('business_id', businessId)
+          .is('deleted_at', null);
 
-      setSaving(false);
-      if (upErr) {
-        setError(upErr.message);
-        toast.error(upErr.message);
-        return;
-      }
-      try {
-        await saveProductComponents(editingId);
-      } catch (compErr) {
-        const msg = compErr instanceof Error ? compErr.message : 'Failed to save components';
-        setError(msg);
-        toast.error(msg);
-        return;
-      }
-      toast.success('Product updated');
-    } else {
-      const { data: inserted, error: insErr } = await supabase
-        .from('products')
-        .insert(payload)
-        .select('id')
-        .single();
-      setSaving(false);
-      if (insErr) {
-        setError(insErr.message);
-        toast.error(insErr.message);
-        return;
-      }
-      try {
-        if (inserted?.id) {
-          await saveProductComponents(inserted.id);
+        if (upErr) {
+          const msg = formatProductSaveError(upErr.message);
+          setError(msg);
+          toast.error(msg);
+          return;
         }
-      } catch (compErr) {
-        const msg = compErr instanceof Error ? compErr.message : 'Failed to save components';
-        setError(msg);
-        toast.error(msg);
-        return;
-      }
-      toast.success('Product added');
-    }
+        try {
+          await saveProductComponents(editingId);
+        } catch (compErr) {
+          const msg = compErr instanceof Error ? compErr.message : 'Failed to save components';
+          setError(msg);
+          toast.error(msg);
+          return;
+        }
+        toast.success('Product updated');
+      } else {
+        const { data: inserted, error: insErr } = await supabase
+          .from('products')
+          .insert(payload)
+          .select('id')
+          .single();
 
-    resetForm();
-    setDialogOpen(false);
-    await loadProducts();
+        if (insErr) {
+          const msg = formatProductSaveError(insErr.message);
+          setError(msg);
+          toast.error(msg);
+          return;
+        }
+        try {
+          if (inserted?.id) {
+            await saveProductComponents(inserted.id);
+          }
+        } catch (compErr) {
+          const msg = compErr instanceof Error ? compErr.message : 'Failed to save components';
+          if (inserted?.id) {
+            setEditingId(inserted.id);
+            toast.error(
+              `${msg} The product was created—fix the BOM and click Save again to update (no duplicate).`,
+            );
+          } else {
+            toast.error(msg);
+          }
+          setError(msg);
+          return;
+        }
+        toast.success('Product added');
+      }
+
+      resetForm();
+      setDialogOpen(false);
+      await loadProducts();
+    } finally {
+      submitInFlightRef.current = false;
+      setSaving(false);
+    }
   }
 
   async function confirmArchive() {

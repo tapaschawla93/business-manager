@@ -28,10 +28,13 @@ export function ProductLineRow({
   line,
   onChange,
   onRemove,
+  /** Rows in `product_components` for this product; null = not loaded yet */
+  componentRowCount = null,
 }: {
   line: LineDraft;
   onChange: (next: LineDraft) => void;
   onRemove: () => void;
+  componentRowCount?: number | null;
 }) {
   const qty = Number(line.quantity);
   const price = Number(line.salePrice);
@@ -62,6 +65,18 @@ export function ProductLineRow({
                 {line.stockOnHand != null && Number.isFinite(line.stockOnHand) ? (
                   <span className="block text-foreground/80">
                     In stock: {line.stockOnHand} units
+                  </span>
+                ) : null}
+                {componentRowCount !== null && line.productId ? (
+                  <span
+                    className={cn(
+                      'mt-0.5 block text-[11px]',
+                      componentRowCount === 0 ? 'text-amber-700 dark:text-amber-500/90' : 'text-muted-foreground',
+                    )}
+                  >
+                    {componentRowCount === 0
+                      ? 'No inventory BOM — only catalog stock (ledger) changes on save.'
+                      : `BOM: ${componentRowCount} component line${componentRowCount === 1 ? '' : 's'}`}
                   </span>
                 ) : null}
               </div>

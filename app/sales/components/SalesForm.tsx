@@ -12,10 +12,17 @@ import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import { Card, CardContent } from '@/components/ui/card';
 import { Separator } from '@/components/ui/separator';
+import { CustomerPicker } from '@/components/CustomerPicker';
 import { ProductPicker } from './ProductPicker';
 import { ProductLineRow, type LineDraft } from './ProductLineRow';
 import { fetchStockByProductId } from '@/lib/queries/inventory';
+import {
+  fetchComponentShortfallsForLines,
+  fetchProductComponentCounts,
+} from '@/lib/queries/saleComponentHints';
+import type { Customer } from '@/lib/types/customer';
 import type { SaleListRow } from '@/lib/queries/salesList';
+import { fetchCustomersList } from '@/lib/queries/customers';
 import { saleRpcUserHint } from '@/lib/saleRpcUserHint';
 
 function newLocalId(): string {
@@ -117,10 +124,16 @@ export function SalesForm({
   const [notes, setNotes] = useState('');
   const [lines, setLines] = useState<LineDraft[]>([emptyLine()]);
   const [stockByProduct, setStockByProduct] = useState<Record<string, number>>({});
+  /** `product_components` row counts per product for BOM hints (prd.v3.5.2). */
+  const [componentCountByProductId, setComponentCountByProductId] = useState<Record<string, number>>({});
+  const [savedCustomers, setSavedCustomers] = useState<Pick<Customer, 'id' | 'name' | 'phone' | 'address'>[]>([]);
+  /** Shown on CustomerPicker trigger after a saved row is chosen (prd.v3.5.4). */
+  const [customerPickDisplay, setCustomerPickDisplay] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   /** Avoid re-hydrating edit mode when `products` refetches after save. */
   const lastHydratedEditSaleIdRef = useRef<string | null>(null);
+  const submitInFlightRef = useRef(false);
 
   const loadProducts = useCallback(async () => {
     const supabase = getSupabaseClient();
@@ -141,6 +154,52 @@ export function SalesForm({
   useEffect(() => {
     void loadProducts();
   }, [loadProducts]);
+
+  useEffect(() => {
+    let cancelled = false;
+    const supabase = getSupabaseClient();
+    void (async () => {
+      const { data, error: err } = await fetchCustomersList(supabase);
+      if (cancelled) return;
+      if (err) {
+        toast.error(err.message);
+        return;
+      }
+      setSavedCustomers(
+        (data ?? []).map((r) => ({
+          id: r.id,
+          name: r.name,
+          phone: r.phone,
+          address: r.address,
+        })),
+      );
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const productIdsOnLines = useMemo(
+    () => [...new Set(lines.map((l) => l.productId).filter((id): id is string => Boolean(id)))],
+    [lines],
+  );
+
+  useEffect(() => {
+    if (productIdsOnLines.length === 0) {
+      setComponentCountByProductId({});
+      return;
+    }
+    let cancelled = false;
+    const supabase = getSupabaseClient();
+    void (async () => {
+      const { data, error: err } = await fetchProductComponentCounts(supabase, productIdsOnLines);
+      if (cancelled || err || !data) return;
+      setComponentCountByProductId(data);
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [productIdsOnLines]);
 
   const refreshStock = useCallback(async () => {
     const supabase = getSupabaseClient();
@@ -167,6 +226,11 @@ export function SalesForm({
     setCustomerName(s.customer_name ?? '');
     setCustomerPhone(s.customer_phone ?? '');
     setCustomerAddress(s.customer_address ?? '');
+    setCustomerPickDisplay(
+      s.customer_phone?.trim()
+        ? `${(s.customer_name ?? 'Customer').trim() || 'Customer'} · ${s.customer_phone.trim()}`
+        : null,
+    );
     setSaleType(s.sale_type ?? '');
     setPaymentMode(s.payment_mode);
     setNotes(s.notes ?? '');
@@ -257,6 +321,7 @@ export function SalesForm({
 
   async function handleSubmit(e: FormEvent) {
     e.preventDefault();
+    if (submitInFlightRef.current) return;
     setError(null);
 
     const ready = lines.filter(
@@ -271,58 +336,88 @@ export function SalesForm({
       return;
     }
     const payload = ready.map((l) => ({
-      product_id: l.productId,
+      product_id: l.productId!,
       quantity: Number(l.quantity),
       sale_price: Number(l.salePrice),
     }));
 
-    const supabase = getSupabaseClient();
+    submitInFlightRef.current = true;
     setSaving(true);
-    const baseArgs = {
-      p_date: date,
-      p_customer_name: customerName.trim() === '' ? null : customerName.trim(),
-      p_customer_phone: customerPhone.trim() === '' ? null : customerPhone.trim(),
-      p_customer_address: customerAddress.trim() === '' ? null : customerAddress.trim(),
-      p_sale_type: saleType === '' ? null : saleType,
-      p_payment_mode: paymentMode,
-      p_notes: notes.trim() === '' ? null : notes.trim(),
-      p_lines: payload,
-    };
-    const { data, error: rpcErr } = editSale
-      ? await supabase.rpc('update_sale', { p_sale_id: editSale.sale.id, ...baseArgs })
-      : await supabase.rpc('save_sale', baseArgs);
-    setSaving(false);
+    try {
+      const supabase = getSupabaseClient();
 
-    if (rpcErr) {
-      const hint = saleRpcUserHint(rpcErr.message, rpcErr.code);
-      setError(hint);
-      toast.error(hint);
-      return;
-    }
+      const { data: bomCounts } = await fetchProductComponentCounts(
+        supabase,
+        payload.map((p) => p.product_id),
+      );
+      const noBomNames = payload
+        .filter((p) => (bomCounts?.[p.product_id] ?? 0) === 0)
+        .map((p) => products.find((x) => x.id === p.product_id)?.name ?? 'Product');
+      const distinctNoBom = [...new Set(noBomNames)];
+      if (distinctNoBom.length > 0) {
+        toast.warning(
+          `No inventory BOM for: ${distinctNoBom.join(', ')}. Only catalog stock (ledger) decreases on save — link components in Products to deduct raw materials.`,
+        );
+      }
 
-    const row = parseSaveSaleResult(data);
-    if (row) {
-      toast.success(
-        editSale
-          ? `Sale updated. Amount ${formatInrDisplay(row.total_amount)} · Profit ${formatInrDisplay(row.total_profit)}`
-          : `Sale saved. Amount ${formatInrDisplay(row.total_amount)} · Profit ${formatInrDisplay(row.total_profit)}`,
-      );
-    } else {
-      toast.warning(
-        'Saved, but the server response could not be read. Confirm under Settings → Export sales.',
-      );
+      const { data: shortfalls, error: shortfallErr } = await fetchComponentShortfallsForLines(supabase, payload);
+      if (!shortfallErr && shortfalls && shortfalls.length > 0) {
+        toast.warning(
+          `Component stock may be insufficient — save may fail: ${shortfalls
+            .map((s) => `${s.inventoryItemName} (need ${s.needed}, have ${s.available})`)
+            .join('; ')}`,
+        );
+      }
+
+      const baseArgs = {
+        p_date: date,
+        p_customer_name: customerName.trim() === '' ? null : customerName.trim(),
+        p_customer_phone: customerPhone.trim() === '' ? null : customerPhone.trim(),
+        p_customer_address: customerAddress.trim() === '' ? null : customerAddress.trim(),
+        p_sale_type: saleType === '' ? null : saleType,
+        p_payment_mode: paymentMode,
+        p_notes: notes.trim() === '' ? null : notes.trim(),
+        p_lines: payload,
+      };
+      const { data, error: rpcErr } = editSale
+        ? await supabase.rpc('update_sale', { p_sale_id: editSale.sale.id, ...baseArgs })
+        : await supabase.rpc('save_sale', baseArgs);
+
+      if (rpcErr) {
+        const hint = saleRpcUserHint(rpcErr.message, rpcErr.code);
+        setError(hint);
+        toast.error(hint);
+        return;
+      }
+
+      const row = parseSaveSaleResult(data);
+      if (row) {
+        toast.success(
+          editSale
+            ? `Sale updated. Amount ${formatInrDisplay(row.total_amount)} · Profit ${formatInrDisplay(row.total_profit)}`
+            : `Sale saved. Amount ${formatInrDisplay(row.total_amount)} · Profit ${formatInrDisplay(row.total_profit)}`,
+        );
+      } else {
+        toast.warning(
+          'Saved, but the server response could not be read. Confirm under Settings → Export sales.',
+        );
+      }
+      if (!editSale) {
+        setCustomerName('');
+        setCustomerPhone('');
+        setCustomerAddress('');
+        setCustomerPickDisplay(null);
+        setSaleType('');
+        setNotes('');
+        setLines([emptyLine()]);
+      }
+      void loadProducts();
+      void refreshStock();
+      onSaved?.();
+    } finally {
+      submitInFlightRef.current = false;
+      setSaving(false);
     }
-    if (!editSale) {
-      setCustomerName('');
-      setCustomerPhone('');
-      setCustomerAddress('');
-      setSaleType('');
-      setNotes('');
-      setLines([emptyLine()]);
-    }
-    void loadProducts();
-    void refreshStock();
-    onSaved?.();
   }
 
   return (
@@ -347,6 +442,11 @@ export function SalesForm({
                   line={line}
                   onChange={(next) => setLine(line.localId, next)}
                   onRemove={() => removeLine(line.localId)}
+                  componentRowCount={
+                    line.productId
+                      ? (componentCountByProductId[line.productId] ?? null)
+                      : null
+                  }
                 />
                 {idx < lines.length - 1 && <Separator className="my-3" />}
               </div>
@@ -380,6 +480,28 @@ export function SalesForm({
             <div className="space-y-1">
               <Label>Payment method</Label>
               <PaymentToggle value={paymentMode} onChange={setPaymentMode} />
+            </div>
+            <div className="space-y-1">
+              <Label>Saved customer (optional)</Label>
+              <p className="text-xs text-muted-foreground">
+                Pick a directory row or type below — phone links the sale to Customers when saved.
+              </p>
+              <CustomerPicker
+                customers={savedCustomers}
+                triggerLabel={customerPickDisplay ?? undefined}
+                onPick={(c) => {
+                  setCustomerName(c.name?.trim() ?? '');
+                  setCustomerPhone(c.phone?.trim() ?? '');
+                  setCustomerAddress(c.address?.trim() ?? '');
+                  setCustomerPickDisplay(c.phone?.trim() ? `${c.name} · ${c.phone}` : c.name);
+                }}
+                onClear={() => {
+                  setCustomerName('');
+                  setCustomerPhone('');
+                  setCustomerAddress('');
+                  setCustomerPickDisplay(null);
+                }}
+              />
             </div>
             <div className="space-y-1">
               <Label>Customer name (optional)</Label>

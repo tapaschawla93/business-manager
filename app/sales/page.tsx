@@ -107,7 +107,7 @@ export default function SalesPage() {
     if (!id || session.kind !== 'ready') return;
     setArchiveSaleId(null);
     const supabase = getSupabaseClient();
-    const { error } = await archiveSaleWithClientFallback(supabase, {
+    const { error, usedClientFallback } = await archiveSaleWithClientFallback(supabase, {
       saleId: id,
       businessId: session.businessId,
     });
@@ -115,7 +115,11 @@ export default function SalesPage() {
       toast.error(error);
       return;
     }
-    toast.success('Sale removed');
+    toast.success(
+      usedClientFallback
+        ? 'Sale removed (client fallback — not one DB transaction; deploy archive_sale RPC when possible).'
+        : 'Sale removed',
+    );
     void load();
   }
 
