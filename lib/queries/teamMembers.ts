@@ -59,6 +59,14 @@ export async function acceptPendingBusinessInvitation(
   return { data: (data as string | null) ?? null, error: null };
 }
 
+export async function getCurrentUserOnboardingGate(
+  supabase: SupabaseClient,
+): Promise<{ data: string | null; error: Error | null }> {
+  const { data, error } = await supabase.rpc('get_current_user_onboarding_gate');
+  if (error) return { data: null, error: new Error(error.message) };
+  return { data: (data as string | null) ?? null, error: null };
+}
+
 /**
  * Sends a login/signup magic-link email to invited user after DB invite row is created.
  * This is client-triggered and keeps redirect pinned to current local or deployed origin.

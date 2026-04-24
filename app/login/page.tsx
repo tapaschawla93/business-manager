@@ -3,7 +3,7 @@
 import { FormEvent, useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { ensureBusinessForCurrentUser, getSupabaseClient } from '@/lib/supabaseClient';
-import { acceptPendingBusinessInvitation } from '@/lib/queries/teamMembers';
+import { acceptPendingBusinessInvitation, getCurrentUserOnboardingGate } from '@/lib/queries/teamMembers';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -26,6 +26,12 @@ export default function LoginPage() {
     businessNameForNewAccount?: string,
   ): Promise<{ destination: 'home' | 'set-password' }> {
     const supabase = getSupabaseClient();
+    const { data: gate, error: gateErr } = await getCurrentUserOnboardingGate(supabase);
+    if (gateErr) throw gateErr;
+    if (gate === 'revoked_member' || gate === 'revoked_invite' || gate === 'expired_invite') {
+      await supabase.auth.signOut({ scope: 'local' });
+      throw new Error('Your access was revoked or invite expired. Ask the business owner to send a new invitation.');
+    }
     const { data: invitedBusinessId, error: inviteErr } = await acceptPendingBusinessInvitation(supabase);
     if (inviteErr) throw inviteErr;
     if (invitedBusinessId) return { destination: 'set-password' };
