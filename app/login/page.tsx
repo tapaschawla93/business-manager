@@ -1,6 +1,6 @@
 'use client';
 
-import { FormEvent, useState, useEffect } from 'react';
+import { FormEvent, useState, useEffect, useRef } from 'react';
 import { useRouter } from 'next/navigation';
 import { ensureBusinessForCurrentUser, getSupabaseClient } from '@/lib/supabaseClient';
 import { acceptPendingBusinessInvitation, getCurrentUserOnboardingGate } from '@/lib/queries/teamMembers';
@@ -9,11 +9,14 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { TrendingUp } from 'lucide-react';
+import { toast } from 'sonner';
 
 type Mode = 'sign-in' | 'sign-up';
 
 export default function LoginPage() {
   const router = useRouter();
+  /** Prevents onAuthStateChange from calling finalize before handleSubmit; avoids creating business as "My Business" before the form name is applied. */
+  const manualAuthFlowInProgress = useRef(false);
   const [mode, setMode] = useState<Mode>('sign-in');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -65,6 +68,9 @@ export default function LoginPage() {
       data: { subscription },
     } = supabase.auth.onAuthStateChange(async (event, session) => {
       if ((event === 'SIGNED_IN' || event === 'TOKEN_REFRESHED') && session) {
+        if (manualAuthFlowInProgress.current) {
+          return;
+        }
         try {
           const result = await finalizePostAuth();
           router.replace(result.destination === 'set-password' ? '/set-password' : '/');
@@ -88,6 +94,7 @@ export default function LoginPage() {
     setLoading(true);
     setError(null);
     setInfo(null);
+    manualAuthFlowInProgress.current = true;
     const supabase = getSupabaseClient();
 
     try {
@@ -111,11 +118,28 @@ export default function LoginPage() {
             'If your project requires email confirmation, open the link in your email, then sign in. Your business is created on first successful sign-in.',
           );
           setLoading(false);
+          manualAuthFlowInProgress.current = false;
           return;
         }
       }
 
-      const result = await finalizePostAuth(mode === 'sign-up' ? businessName || undefined : undefined);
+      const nameForOnboarding = mode === 'sign-up' ? businessName.trim() || undefined : undefined;
+      const result = await finalizePostAuth(nameForOnboarding);
+      if (mode === 'sign-up' && nameForOnboarding) {
+        const { data: u } = await supabase.auth.getUser();
+        if (u.user) {
+          const { data: prof } = await supabase.from('profiles').select('business_id').eq('id', u.user.id).maybeSingle();
+          const bid = prof?.business_id as string | undefined;
+          if (bid) {
+            const { error: nameErr } = await supabase.from('businesses').update({ name: nameForOnboarding }).eq('id', bid);
+            if (nameErr) {
+              toast.error(`Could not save business name: ${nameErr.message}`);
+            } else if (typeof window !== 'undefined') {
+              window.dispatchEvent(new CustomEvent('bizmanager:business-name-updated', { detail: nameForOnboarding }));
+            }
+          }
+        }
+      }
       router.replace(result.destination === 'set-password' ? '/set-password' : '/');
       router.refresh();
     } catch (err: unknown) {
@@ -123,6 +147,7 @@ export default function LoginPage() {
       setError(message);
     } finally {
       setLoading(false);
+      manualAuthFlowInProgress.current = false;
     }
   }
 

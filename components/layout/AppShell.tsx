@@ -167,6 +167,17 @@ export function AppShell({ children }: { children: ReactNode }) {
     };
   }, [pathname, router]);
 
+  useEffect(() => {
+    function onBusinessNameUpdated(e: Event) {
+      const detail = (e as CustomEvent<string>).detail;
+      if (typeof detail === 'string' && detail.trim()) {
+        setSidebarBusinessName(detail.trim());
+      }
+    }
+    window.addEventListener('bizmanager:business-name-updated', onBusinessNameUpdated);
+    return () => window.removeEventListener('bizmanager:business-name-updated', onBusinessNameUpdated);
+  }, []);
+
   async function handleSignOut() {
     setMobileNavOpen(false);
     const supabase = getSupabaseClient();

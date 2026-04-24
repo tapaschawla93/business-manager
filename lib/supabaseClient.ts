@@ -36,9 +36,14 @@ export async function ensureBusinessForCurrentUser(
   businessName?: string
 ): Promise<{ data: string | null; error: Error | null }> {
   const supabase = getSupabaseClient();
-  const { data, error } = await supabase.rpc('create_business_for_user', {
-    p_business_name: businessName ?? 'My Business',
-  });
+  const trimmed = businessName?.trim() ?? '';
+  // Only pass a name when the caller set one. Omit the param for empty so Postgres default applies,
+  // and we never send the literal "My Business" from the client on every session refresh.
+  const args =
+    trimmed === ''
+      ? ({} as Record<string, never>)
+      : { p_business_name: trimmed };
+  const { data, error } = await supabase.rpc('create_business_for_user', args);
 
   if (error) {
     const msg = error.message;

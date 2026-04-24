@@ -14,6 +14,7 @@ import { PageLoadingSkeleton } from '@/components/layout/PageLoadingSkeleton';
 import { SessionRedirectNotice } from '@/components/SessionRedirectNotice';
 import { downloadBackupWorkbook } from '@/lib/excel/downloadBackupWorkbook';
 import { SaleTagsSettingsCard } from '@/app/settings/components/SaleTagsSettingsCard';
+import { BusinessNameSettingsCard } from '@/app/settings/components/BusinessNameSettingsCard';
 import { TeamMembersSettingsCard } from '@/app/settings/components/TeamMembersSettingsCard';
 
 export default function SettingsPage() {
@@ -73,6 +74,7 @@ export default function SettingsPage() {
         description="Tags, defaults, and a local copy of your data. CSV templates and uploads live on each module (⋮ menu)."
       />
 
+      <BusinessNameSettingsCard businessId={businessId} />
       <SaleTagsSettingsCard businessId={businessId} />
       <TeamMembersSettingsCard />
 
