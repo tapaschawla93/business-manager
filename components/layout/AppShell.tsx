@@ -56,7 +56,9 @@ export function AppShell({ children }: { children: ReactNode }) {
   const pathname = usePathname();
   const router = useRouter();
   const [email, setEmail] = useState<string | null>(null);
-  const [businessName, setBusinessName] = useState<string | null>(null);
+  /** Resolved `businesses.name` from the DB. While loading, UI shows a pulse — not the signup default string. */
+  const [sidebarBusinessName, setSidebarBusinessName] = useState<string | null>(null);
+  const [businessNameLoading, setBusinessNameLoading] = useState(true);
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
 
   useEffect(() => {
@@ -72,52 +74,96 @@ export function AppShell({ children }: { children: ReactNode }) {
     return () => subscription.unsubscribe();
   }, []);
 
-  /** Resolve business name for the sidebar header (profile -> business). */
+  /** Load sidebar title from `businesses.name` (single embed query + refetch on auth change). */
   useEffect(() => {
     const supabase = getSupabaseClient();
     let cancelled = false;
-    void (async () => {
+
+    async function loadSidebarTitle() {
       const { data: userData } = await supabase.auth.getUser();
       const user = userData.user;
-      if (!user || cancelled) return;
-      const { data: profile, error: profileError } = await supabase
+      if (!user) {
+        if (!cancelled) setBusinessNameLoading(false);
+        return;
+      }
+      if (cancelled) return;
+
+      const { data: row, error: profileError } = await supabase
         .from('profiles')
-        .select('business_id, password_setup_required')
+        .select('business_id, password_setup_required, businesses(name)')
         .eq('id', user.id)
         .maybeSingle();
+
       if (cancelled) return;
       if (profileError) {
-        devError('AppShell profile business id', profileError);
+        setBusinessNameLoading(false);
+        devError('AppShell profile + business name', profileError);
         toast.error(profileError.message || 'Could not load business name');
         return;
       }
-      const businessId = (profile?.business_id as string | undefined) ?? null;
-      const passwordSetupRequired = Boolean(profile?.password_setup_required);
-      if (passwordSetupRequired && pathname !== '/set-password') {
-        router.replace('/set-password');
-        return;
-      }
-      if (!businessId) {
-        setBusinessName(null);
+      if (!row) {
+        setSidebarBusinessName(null);
+        setBusinessNameLoading(false);
         return;
       }
 
-      const { data: business, error: businessError } = await supabase
-        .from('businesses')
-        .select('name')
-        .eq('id', businessId)
-        .maybeSingle();
-      if (cancelled) return;
-      if (businessError) {
-        devError('AppShell business name', businessError);
-        toast.error(businessError.message || 'Could not load business name');
+      const profileRow = row as {
+        business_id?: string;
+        password_setup_required?: boolean;
+        businesses?: { name: string } | { name: string }[] | null;
+      };
+      const passwordSetupRequired = Boolean(profileRow.password_setup_required);
+      if (passwordSetupRequired && pathname !== '/set-password') {
+        setBusinessNameLoading(false);
+        router.replace('/set-password');
         return;
       }
-      const name = (business?.name as string | undefined)?.trim() ?? '';
-      setBusinessName(name || null);
-    })();
+
+      const embedded = profileRow.businesses;
+      const nameFromJoin =
+        embedded && !Array.isArray(embedded) && typeof embedded.name === 'string'
+          ? embedded.name.trim()
+          : Array.isArray(embedded) && embedded[0] && typeof embedded[0].name === 'string'
+            ? embedded[0].name.trim()
+            : '';
+
+      if (nameFromJoin) {
+        setSidebarBusinessName(nameFromJoin);
+        setBusinessNameLoading(false);
+        return;
+      }
+
+      const businessId = profileRow.business_id;
+      if (businessId) {
+        const { data: business, error: businessError } = await supabase
+          .from('businesses')
+          .select('name')
+          .eq('id', businessId)
+          .maybeSingle();
+        if (cancelled) return;
+        if (businessError) {
+          setBusinessNameLoading(false);
+          devError('AppShell business name fallback', businessError);
+          toast.error(businessError.message || 'Could not load business name');
+          return;
+        }
+        const n = (business?.name as string | undefined)?.trim() ?? '';
+        setSidebarBusinessName(n || null);
+      } else {
+        setSidebarBusinessName(null);
+      }
+      setBusinessNameLoading(false);
+    }
+
+    void loadSidebarTitle();
+    const {
+      data: { subscription },
+    } = supabase.auth.onAuthStateChange(() => {
+      void loadSidebarTitle();
+    });
     return () => {
       cancelled = true;
+      subscription.unsubscribe();
     };
   }, [pathname, router]);
 
@@ -148,12 +194,19 @@ export function AppShell({ children }: { children: ReactNode }) {
             <TrendingUp className="h-5 w-5" aria-hidden strokeWidth={2.5} />
           </div>
           <div className="min-w-0">
-            <span
-              className="block truncate text-lg font-bold tracking-tight text-foreground"
-              title={businessName ?? 'My Business'}
-            >
-              {businessName ?? 'My Business'}
-            </span>
+            {businessNameLoading ? (
+              <span
+                className="block h-6 w-[min(11rem,100%)] max-w-full animate-pulse rounded-md bg-muted"
+                aria-hidden
+              />
+            ) : (
+              <span
+                className="block truncate text-lg font-bold tracking-tight text-foreground"
+                title={sidebarBusinessName ?? undefined}
+              >
+                {sidebarBusinessName ?? '—'}
+              </span>
+            )}
           </div>
         </div>
 
@@ -224,12 +277,19 @@ export function AppShell({ children }: { children: ReactNode }) {
               <TrendingUp className="h-5 w-5" aria-hidden strokeWidth={2.5} />
             </div>
             <div className="min-w-0">
-              <span
-                className="block truncate text-lg font-bold tracking-tight text-foreground"
-                title={businessName ?? 'My Business'}
-              >
-                {businessName ?? 'My Business'}
-              </span>
+              {businessNameLoading ? (
+                <span
+                  className="block h-6 w-[min(11rem,100%)] max-w-full animate-pulse rounded-md bg-muted"
+                  aria-hidden
+                />
+              ) : (
+                <span
+                  className="block truncate text-lg font-bold tracking-tight text-foreground"
+                  title={sidebarBusinessName ?? undefined}
+                >
+                  {sidebarBusinessName ?? '—'}
+                </span>
+              )}
             </div>
           </div>
           <nav className="flex flex-1 flex-col gap-1 overflow-y-auto px-4 py-4" aria-label="Main">
