@@ -72,7 +72,7 @@ export function AppShell({ children }: { children: ReactNode }) {
     return () => subscription.unsubscribe();
   }, []);
 
-  /** One embed query: current profile row + linked business name for the sidebar header. */
+  /** Resolve business name for the sidebar header (profile -> business). */
   useEffect(() => {
     const supabase = getSupabaseClient();
     let cancelled = false;
@@ -80,26 +80,36 @@ export function AppShell({ children }: { children: ReactNode }) {
       const { data: userData } = await supabase.auth.getUser();
       const user = userData.user;
       if (!user || cancelled) return;
-      const { data, error } = await supabase
+      const { data: profile, error: profileError } = await supabase
         .from('profiles')
-        .select('businesses(name)')
+        .select('business_id')
         .eq('id', user.id)
         .maybeSingle();
       if (cancelled) return;
-      if (error) {
-        devError('AppShell business name', error);
-        toast.error(error.message || 'Could not load business name');
+      if (profileError) {
+        devError('AppShell profile business id', profileError);
+        toast.error(profileError.message || 'Could not load business name');
         return;
       }
-      const row = data as { businesses?: { name: string } | { name: string }[] | null } | null;
-      const embedded = row?.businesses;
-      const name =
-        embedded && !Array.isArray(embedded) && typeof embedded.name === 'string'
-          ? embedded.name
-          : Array.isArray(embedded) && embedded[0] && typeof embedded[0].name === 'string'
-            ? embedded[0].name
-            : null;
-      setBusinessName(name);
+      const businessId = (profile?.business_id as string | undefined) ?? null;
+      if (!businessId) {
+        setBusinessName(null);
+        return;
+      }
+
+      const { data: business, error: businessError } = await supabase
+        .from('businesses')
+        .select('name')
+        .eq('id', businessId)
+        .maybeSingle();
+      if (cancelled) return;
+      if (businessError) {
+        devError('AppShell business name', businessError);
+        toast.error(businessError.message || 'Could not load business name');
+        return;
+      }
+      const name = (business?.name as string | undefined)?.trim() ?? '';
+      setBusinessName(name || null);
     })();
     return () => {
       cancelled = true;
@@ -133,12 +143,12 @@ export function AppShell({ children }: { children: ReactNode }) {
             <TrendingUp className="h-5 w-5" aria-hidden strokeWidth={2.5} />
           </div>
           <div className="min-w-0">
-            <span className="block text-lg font-bold tracking-tight text-foreground">BizManager</span>
-            {businessName ? (
-              <span className="mt-0.5 block truncate text-xs font-semibold text-muted-foreground" title={businessName}>
-                {businessName}
-              </span>
-            ) : null}
+            <span
+              className="block truncate text-lg font-bold tracking-tight text-foreground"
+              title={businessName ?? 'My Business'}
+            >
+              {businessName ?? 'My Business'}
+            </span>
           </div>
         </div>
 
@@ -209,12 +219,12 @@ export function AppShell({ children }: { children: ReactNode }) {
               <TrendingUp className="h-5 w-5" aria-hidden strokeWidth={2.5} />
             </div>
             <div className="min-w-0">
-              <span className="block text-lg font-bold tracking-tight text-foreground">BizManager</span>
-              {businessName ? (
-                <span className="mt-0.5 block truncate text-xs font-semibold text-muted-foreground" title={businessName}>
-                  {businessName}
-                </span>
-              ) : null}
+              <span
+                className="block truncate text-lg font-bold tracking-tight text-foreground"
+                title={businessName ?? 'My Business'}
+              >
+                {businessName ?? 'My Business'}
+              </span>
             </div>
           </div>
           <nav className="flex flex-1 flex-col gap-1 overflow-y-auto px-4 py-4" aria-label="Main">

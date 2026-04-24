@@ -2,7 +2,6 @@ import type { SupabaseClient } from '@supabase/supabase-js';
 import type { Product } from '@/lib/types/product';
 import {
   buildImportIssuesCsv,
-  getAddToProductsFlag,
   getOptionalNumber,
   getRequiredNumber,
   getString,
@@ -15,7 +14,11 @@ import {
   resolveProductLookup,
   type ProductLookupResolution,
 } from '@/lib/productLookupMap';
-import { insertStubProductForInventory } from '@/lib/inventory/stubProduct';
+function productDisplayName(p: Pick<Product, 'name' | 'variant'>): string {
+  const n = p.name.trim();
+  const v = (p.variant ?? '').trim();
+  return v ? `${n} · ${v}` : n;
+}
 
 export type InventoryImportResult = { inserted: number; issues: ImportIssue[] };
 
@@ -44,15 +47,24 @@ export async function importInventoryCsvRows(
     const cost = getRequiredNumber(r, 'unit_cost');
     const reorder = getOptionalNumber(r, 'reorder_level');
     const lookupRaw = getString(r, 'product_lookup');
-    const addTo = getAddToProductsFlag(r);
+    const productName = getString(r, 'product_name');
+    const variant = getString(r, 'variant');
+    const derivedLookup = productName ? `${productName}${variant ? `::${variant}` : ''}` : '';
+    const effectiveLookup = lookupRaw || derivedLookup;
 
-    if (!name) issues.push({ row: rowNo, field: 'name', message: 'required' });
+    if (!effectiveLookup) {
+      issues.push({
+        row: rowNo,
+        field: 'product_lookup',
+        message: "required (use 'product_lookup' = name or name::variant, or use 'product_name' + optional 'variant')",
+      });
+    }
     if (stock === null || stock < 0) issues.push({ row: rowNo, field: 'current_stock', message: 'must be >= 0 number' });
     if (cost === null || cost < 0) issues.push({ row: rowNo, field: 'unit_cost', message: 'must be >= 0 number' });
     if (reorder !== null && reorder < 0) issues.push({ row: rowNo, field: 'reorder_level', message: 'must be >= 0 if set' });
 
-    const resolved: ProductLookupResolution = lookupRaw
-      ? resolveProductLookup(lookupIndex, lookupRaw)
+    const resolved: ProductLookupResolution = effectiveLookup
+      ? resolveProductLookup(lookupIndex, effectiveLookup)
       : { productId: null, ambiguous: false };
     let productId = resolved.productId;
 
@@ -60,43 +72,30 @@ export async function importInventoryCsvRows(
       issues.push({ row: rowNo, field: 'product_lookup', message: PRODUCT_LOOKUP_AMBIGUOUS_MESSAGE });
     }
 
-    const costOk = cost !== null && cost >= 0;
-
-    if (lookupRaw && !resolved.ambiguous && !productId && addTo && costOk) {
-      const stub = await insertStubProductForInventory(supabase, businessId, name, cost);
-      if (stub.error || !stub.id) {
-        issues.push({ row: rowNo, field: 'add_to_products', message: stub.error ?? 'stub insert failed' });
-      } else {
-        productId = stub.id;
-        products.push({ id: stub.id, name: name.trim(), variant: null });
-        lookupIndex = buildProductLookupMap(products);
-      }
-    } else if (lookupRaw && !resolved.ambiguous && !productId && !addTo) {
-      issues.push({ row: rowNo, field: 'product_lookup', message: 'no matching product (set add_to_products true to create stub)' });
-    } else if (!lookupRaw && addTo && costOk) {
-      const stub = await insertStubProductForInventory(supabase, businessId, name, cost);
-      if (stub.error || !stub.id) {
-        issues.push({ row: rowNo, field: 'add_to_products', message: stub.error ?? 'stub insert failed' });
-      } else {
-        productId = stub.id;
-        products.push({ id: stub.id, name: name.trim(), variant: null });
-        lookupIndex = buildProductLookupMap(products);
-      }
+    if (effectiveLookup && !resolved.ambiguous && !productId) {
+      issues.push({ row: rowNo, field: 'product_lookup', message: 'no matching product (add it in Products first)' });
     }
 
-    if (!name || stock === null || stock < 0 || cost === null || cost < 0 || (reorder !== null && reorder < 0)) {
+    if (stock === null || stock < 0 || cost === null || cost < 0 || (reorder !== null && reorder < 0)) {
       continue;
     }
     if (resolved.ambiguous) {
       continue;
     }
-    if (lookupRaw && !productId) {
+    if (effectiveLookup && !productId) {
+      continue;
+    }
+
+    const product = productId ? products.find((p) => p.id === productId) : null;
+    const finalName = product ? productDisplayName(product) : name.trim();
+    if (!finalName) {
+      issues.push({ row: rowNo, field: 'name', message: 'could not determine inventory line name' });
       continue;
     }
 
     const { error: insErr } = await supabase.from('inventory_items').insert({
       business_id: businessId,
-      name: name.trim(),
+      name: finalName,
       unit,
       current_stock: stock,
       unit_cost: cost,

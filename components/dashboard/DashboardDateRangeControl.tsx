@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useState, type ReactNode } from 'react';
 import { format } from 'date-fns';
 import { Calendar } from 'lucide-react';
 import type { DashboardDateRange } from '@/lib/queries/dashboard';
@@ -38,12 +38,15 @@ export function DashboardDateRangeControl({
   onYtd,
   disabled,
   className,
+  endSlot,
 }: {
   appliedRange: DashboardDateRange | null;
   onApply: (r: DashboardDateRange) => void;
   onYtd: () => void;
   disabled?: boolean;
   className?: string;
+  /** Renders inside the period card: below date/YTD on small screens, same row on `md+`. */
+  endSlot?: ReactNode;
 }) {
   const [open, setOpen] = useState(false);
   const [useDialog, setUseDialog] = useState(false);
@@ -74,29 +77,32 @@ export function DashboardDateRangeControl({
 
   return (
     <div className={cn('flex flex-col gap-2', className)}>
-      <div className="flex flex-col gap-3 rounded-card border border-border/70 bg-card/40 p-3 shadow-sm sm:flex-row sm:flex-wrap sm:items-center md:gap-4 md:p-4">
-        <button
-          type="button"
-          disabled={disabled || !appliedRange}
-          onClick={() => setOpen(true)}
-          className={cn(
-            'flex min-h-10 w-full items-center gap-2 rounded-xl border border-border/80 bg-background px-3 py-2 text-left text-sm font-medium shadow-sm transition-colors hover:bg-muted/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:pointer-events-none disabled:opacity-50 sm:min-w-[220px] sm:flex-1 md:min-h-11 md:text-base',
-          )}
-        >
-          <Calendar className="h-4 w-4 shrink-0 text-muted-foreground" aria-hidden />
-          <span className="min-w-0 truncate">
-            {appliedRange ? formatRangeLabel(appliedRange) : 'Select period'}
-          </span>
-        </button>
-        <Button
-          type="button"
-          variant="secondary"
-          className="h-10 shrink-0 rounded-xl text-sm font-semibold md:h-11 md:text-base"
-          disabled={disabled}
-          onClick={onYtd}
-        >
-          Year to date
-        </Button>
+      <div className="flex flex-col gap-3 rounded-card border border-border/70 bg-card/40 p-3 shadow-sm md:flex-row md:flex-wrap md:items-end md:gap-4 md:p-4">
+        <div className="flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-center sm:gap-3 md:min-w-0 md:flex-1 md:gap-4">
+          <button
+            type="button"
+            disabled={disabled || !appliedRange}
+            onClick={() => setOpen(true)}
+            className={cn(
+              'flex min-h-10 w-full items-center gap-2 rounded-xl border border-border/80 bg-background px-3 py-2 text-left text-sm font-medium shadow-sm transition-colors hover:bg-muted/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:pointer-events-none disabled:opacity-50 sm:min-w-[220px] sm:flex-1 md:min-h-11 md:text-base',
+            )}
+          >
+            <Calendar className="h-4 w-4 shrink-0 text-muted-foreground" aria-hidden />
+            <span className="min-w-0 truncate">
+              {appliedRange ? formatRangeLabel(appliedRange) : 'Select period'}
+            </span>
+          </button>
+          <Button
+            type="button"
+            variant="secondary"
+            className="h-10 w-full shrink-0 rounded-xl text-sm font-semibold sm:w-auto md:h-11 md:text-base"
+            disabled={disabled}
+            onClick={onYtd}
+          >
+            Year to date
+          </Button>
+        </div>
+        {endSlot ? <div className="min-w-0 w-full shrink-0 md:w-[min(100%,220px)]">{endSlot}</div> : null}
       </div>
       {appliedRange ? (
         <p className="text-xs text-muted-foreground md:text-sm">

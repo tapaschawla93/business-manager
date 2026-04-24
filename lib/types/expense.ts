@@ -2,6 +2,8 @@
 export type Expense = {
   id: string;
   business_id: string;
+  /** FK to `sale_tags` (same dictionary as sales). */
+  expense_tag_id: string;
   date: string;
   vendor_name: string;
   /** Optional linked vendor (see `vendors` table). */
@@ -25,6 +27,7 @@ export type Expense = {
 
 export type ExpenseInsert = {
   business_id: string;
+  expense_tag_id: string;
   date: string;
   vendor_name: string;
   vendor_id?: string | null;

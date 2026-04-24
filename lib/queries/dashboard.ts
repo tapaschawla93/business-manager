@@ -17,14 +17,18 @@ export function defaultDashboardYtdRange(): DashboardDateRange {
 
 export type DashboardKPIs = {
   total_revenue: number;
+  /**
+   * When dashboard scope is **All tags**, operating expenses in range.
+   * When a **single sale tag** is selected, **COGS**: sum of `quantity × cost_price_snapshot` on lines for sales in that tag (still returned as `total_expenses` for RPC shape).
+   */
   total_expenses: number;
   /** Sum of `inventory_items.current_stock × unit_cost` for the tenant (point-in-time; not range-filtered). */
   inventory_value: number;
-  /** Revenue − expenses in the selected period. */
+  /** Revenue minus the same counterparty total as `total_expenses` (expenses vs COGS by scope). */
   gross_profit: number;
-  /** Cash sales − cash expenses in range. */
+  /** Cash sales minus cash-tagged portion of that counterparty total. */
   net_cash: number;
-  /** Online sales − online expenses in range. */
+  /** Online sales minus online-tagged portion of that counterparty total. */
   net_online: number;
   /** net_cash + net_online for the period. */
   cash_in_hand_total: number;
@@ -62,6 +66,7 @@ export type MonthlyPerformanceRow = {
   month: number;
   year: number;
   revenue: number;
+  /** Operating expenses per month (All tags) or monthly COGS for the scoped tag. */
   expenses: number;
   profit: number;
 };
@@ -154,13 +159,18 @@ function parseTopProductsPayload(payload: unknown): TopProductsPayload | null {
   return { top_by_revenue, top_by_margin, top_by_volume, sales_by_category };
 }
 
+/** When set, KPIs (except inventory_value) scope to this `sale_tags.id`; `null` = all tags. */
+export type DashboardTagFilter = string | null;
+
 export async function getDashboardKPIs(
   supabase: SupabaseClient,
   range: DashboardDateRange,
+  saleTagId: DashboardTagFilter = null,
 ): Promise<{ data: DashboardKPIs | null; error: Error | null }> {
   const { data, error } = await supabase.rpc('get_dashboard_kpis', {
     p_from: range.from,
     p_to: range.to,
+    p_sale_tag_id: saleTagId,
   });
   if (error) return { data: null, error: new Error(error.message) };
 
@@ -222,10 +232,12 @@ export async function getDashboardKPIs(
 export async function getTopProducts(
   supabase: SupabaseClient,
   range: DashboardDateRange,
+  saleTagId: DashboardTagFilter = null,
 ): Promise<{ data: TopProductsPayload | null; error: Error | null }> {
   const { data, error } = await supabase.rpc('get_top_products', {
     p_from: range.from,
     p_to: range.to,
+    p_sale_tag_id: saleTagId,
   });
   if (error) return { data: null, error: new Error(error.message) };
 
@@ -245,10 +257,12 @@ export async function getTopProducts(
 export async function getMonthlyPerformance(
   supabase: SupabaseClient,
   range: DashboardDateRange,
+  saleTagId: DashboardTagFilter = null,
 ): Promise<{ data: MonthlyPerformanceRow[] | null; error: Error | null }> {
   const { data, error } = await supabase.rpc('get_monthly_performance', {
     p_from: range.from,
     p_to: range.to,
+    p_sale_tag_id: saleTagId,
   });
   if (error) return { data: null, error: new Error(error.message) };
   if (!Array.isArray(data)) {

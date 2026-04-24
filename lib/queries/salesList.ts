@@ -31,7 +31,8 @@ export type SaleListRow = {
     | 'payment_mode'
     | 'notes'
     | 'created_at'
-  >;
+    | 'sale_tag_id'
+  > & { sale_tag_label?: string | null };
   lineSummary: {
     primaryProduct: string;
     primaryCategory: string;
@@ -49,7 +50,7 @@ export async function fetchSalesList(supabase: SupabaseClient): Promise<{
   const { data: sales, error: e1 } = await supabase
     .from('sales')
     .select(
-      'id, date, customer_name, customer_phone, customer_address, sale_type, total_amount, total_cost, total_profit, payment_mode, notes, created_at',
+      'id, date, customer_name, customer_phone, customer_address, sale_type, total_amount, total_cost, total_profit, payment_mode, notes, created_at, sale_tag_id, sale_tags ( label )',
     )
     .is('deleted_at', null)
     .order('created_at', { ascending: false });
@@ -82,7 +83,18 @@ export async function fetchSalesList(supabase: SupabaseClient): Promise<{
     bySale.set(it.sale_id, arr);
   }
 
-  const rows: SaleListRow[] = sales.map((sale) => {
+  const rows: SaleListRow[] = sales.map((raw) => {
+    type TagJoin = { label: string } | { label: string }[] | null | undefined;
+    const saleRow = raw as Record<string, unknown> & { id: string; sale_tags?: TagJoin };
+    const tagJoin: TagJoin = saleRow.sale_tags;
+    const sale_tag_label = Array.isArray(tagJoin) ? tagJoin[0]?.label : tagJoin?.label;
+    const { sale_tags: _st, ...saleRest } = saleRow;
+    const sale = {
+      ...(saleRest as unknown as SaleListRow['sale']),
+      sale_tag_id: String((saleRest as { sale_tag_id?: string }).sale_tag_id ?? ''),
+      sale_tag_label: sale_tag_label ?? null,
+    };
+
     const rawLines = bySale.get(sale.id) ?? [];
     const totalQty = rawLines.reduce((s, l) => s + Number(l.quantity), 0);
     const first = rawLines[0];

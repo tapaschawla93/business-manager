@@ -30,7 +30,7 @@ function formatDateCompact(iso: string): string {
 
 type Props = {
   expenses: Expense[];
-  onArchive: (id: string) => void;
+  onArchive: (row: Expense) => void;
 };
 
 export function ExpenseMobileList({ expenses, onArchive }: Props) {
@@ -93,7 +93,7 @@ export function ExpenseMobileList({ expenses, onArchive }: Props) {
                   <DropdownMenuContent align="end" className="w-40">
                     <DropdownMenuItem
                       className="text-destructive focus:bg-destructive/10 focus:text-destructive"
-                      onSelect={() => onArchive(row.id)}
+                      onSelect={() => onArchive(row)}
                     >
                       Archive
                     </DropdownMenuItem>
@@ -126,7 +126,7 @@ export function ExpenseMobileList({ expenses, onArchive }: Props) {
                   </Badge>
                 </div>
                 <p className="text-[11px] text-muted-foreground">
-                  Editing or archiving here does not change stock — adjust inventory on the Inventory page if needed.
+                  On delete, stock is unchanged by default; you can opt to reverse stock in the confirmation dialog.
                 </p>
               </div>
             </MobileAccordionBody>

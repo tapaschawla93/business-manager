@@ -7,7 +7,9 @@
     "dev:clean": "rm -rf .next && next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "next lint"
+    "lint": "next lint",
+    "test": "vitest run",
+    "test:watch": "vitest"
   },
   "dependencies": {
     "@radix-ui/react-alert-dialog": "^1.1.4",
@@ -47,6 +49,7 @@
     "@types/react-dom": "^18.2.0",
     "eslint": "^8.57.0",
     "eslint-config-next": "14.1.0",
-    "typescript": "^5.4.0"
+    "typescript": "^5.4.0",
+    "vitest": "^3.0.0"
   }
 }

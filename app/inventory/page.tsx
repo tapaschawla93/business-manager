@@ -1,8 +1,8 @@
 'use client';
 
-import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { FormEvent, useCallback, useEffect, useMemo, useState } from 'react';
 import { toast } from 'sonner';
-import { Download, Pencil, Plus, RefreshCw, Search, Trash2, Upload, Warehouse } from 'lucide-react';
+import { Pencil, Plus, RefreshCw, Search, Trash2, Warehouse } from 'lucide-react';
 import { downloadCsv, rowsToCsv } from '@/lib/exportCsv';
 import { parseCsv } from '@/lib/importCsv';
 import { importInventoryCsvRows, inventoryImportIssuesCsv } from '@/lib/inventory/importInventoryCsv';
@@ -42,6 +42,7 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { SessionRedirectNotice } from '@/components/SessionRedirectNotice';
 import { useBusinessSession } from '@/lib/auth/useBusinessSession';
 import { InventoryMobileList } from '@/app/inventory/components/InventoryMobileList';
+import { ModuleCsvMenu } from '@/components/ModuleCsvMenu';
 
 /** Optional reorder hint: highlight when at or on threshold (inclusive). */
 function isLowStock(row: InventoryItem): boolean {
@@ -56,7 +57,6 @@ function productLineName(p: Product): string {
 export default function InventoryPage() {
   const session = useBusinessSession({ onMissingBusiness: 'error' });
   const businessId = session.kind === 'ready' ? session.businessId : null;
-  const uploadRef = useRef<HTMLInputElement | null>(null);
   const [rows, setRows] = useState<InventoryItem[]>([]);
   const [products, setProducts] = useState<Product[]>([]);
   const [loading, setLoading] = useState(true);
@@ -177,16 +177,15 @@ export default function InventoryPage() {
   }
 
   function downloadInventoryTemplate() {
-    const headers = ['name', 'unit', 'current_stock', 'unit_cost', 'reorder_level', 'product_lookup', 'add_to_products'];
+    const headers = ['product_name', 'variant', 'unit', 'current_stock', 'unit_cost', 'reorder_level'];
     const sample = [
       {
-        name: 'Grow bags 5kg',
+        product_name: 'Grow bags',
+        variant: '5kg',
         unit: 'pcs',
         current_stock: '100',
         unit_cost: '12',
         reorder_level: '20',
-        product_lookup: '',
-        add_to_products: 'false',
       },
     ];
     downloadCsv('template_inventory.csv', rowsToCsv(headers, sample));
@@ -451,6 +450,13 @@ export default function InventoryPage() {
               <Plus className="h-4 w-4" aria-hidden />
               Add line
             </Button>
+            <ModuleCsvMenu
+              menuAriaLabel="Inventory CSV import"
+              busy={importing}
+              disabled={!businessId}
+              onDownloadTemplate={downloadInventoryTemplate}
+              onFileSelected={(f) => void importInventoryFile(f)}
+            />
           </>
         }
       />

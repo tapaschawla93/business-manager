@@ -3,7 +3,14 @@ import type { WorkbookSheetName } from './workbookSchema';
 
 export type ParsedWorkbook = Record<WorkbookSheetName, Record<string, unknown>[]>;
 
+/** Guard against huge files freezing the tab or running out of memory during `readAsArrayBuffer` / `XLSX.read`. */
+export const MAX_WORKBOOK_BYTES = 25 * 1024 * 1024;
+
 export function parseWorkbook(file: File): Promise<ParsedWorkbook> {
+  if (file.size > MAX_WORKBOOK_BYTES) {
+    const mb = MAX_WORKBOOK_BYTES / (1024 * 1024);
+    return Promise.reject(new Error(`Workbook is too large (max ${mb} MB). Choose a smaller file or split the data.`));
+  }
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
     reader.onerror = () => reject(new Error('Failed to read workbook.'));

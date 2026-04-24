@@ -1,7 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useState } from 'react';
-import { Download, Pencil, Plus, Trash2, Upload } from 'lucide-react';
+import { Pencil, Plus, Trash2 } from 'lucide-react';
 import { toast } from 'sonner';
 import { getSupabaseClient } from '@/lib/supabaseClient';
 import { fetchSalesList } from '@/lib/queries/salesList';
@@ -52,6 +52,8 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { SessionRedirectNotice } from '@/components/SessionRedirectNotice';
 import { useBusinessSession } from '@/lib/auth/useBusinessSession';
 import { archiveSaleWithClientFallback } from '@/lib/archiveSale';
+import { fetchDefaultSaleTagId } from '@/lib/queries/saleTags';
+import { ModuleCsvMenu } from '@/components/ModuleCsvMenu';
 
 function formatDateShort(iso: string): string {
   try {
@@ -65,7 +67,7 @@ function formatDateShort(iso: string): string {
 }
 
 function orderLabel(id: string): string {
-  const compact = id.replace(/-/g, '').slice(0, 8).toUpperCase();
+  const compact = id.replace(/-/g, '').slice(0, 6).toUpperCase();
   return `ORD-${compact}`;
 }
 
@@ -117,7 +119,7 @@ export default function SalesPage() {
     }
     toast.success(
       usedClientFallback
-        ? 'Sale removed (client fallback — not one DB transaction; deploy archive_sale RPC when possible).'
+        ? 'Sale removed (dev-only fallback without archive_sale RPC — use migrations in production).'
         : 'Sale removed',
     );
     void load();
@@ -133,6 +135,7 @@ export default function SalesPage() {
       'sale_type',
       'payment_mode',
       'notes',
+      'tag',
       'product_lookup',
       'quantity',
       'sale_price',
@@ -147,6 +150,7 @@ export default function SalesPage() {
         sale_type: 'B2C',
         payment_mode: 'cash',
         notes: '',
+        tag: 'General',
         product_lookup: 'Sample Product A',
         quantity: '2',
         sale_price: '1500',
@@ -163,13 +167,29 @@ export default function SalesPage() {
     const { rows: csvRows } = parseCsv(text);
     const issues: ImportIssue[] = [];
 
-    const { data: productRows, error: pErr } = await supabase
-      .from('products')
-      .select('id, name, variant')
-      .is('deleted_at', null);
+    const [{ data: productRows, error: pErr }, { data: tagRows, error: tagErr }, { data: defaultTagId, error: defErr }] =
+      await Promise.all([
+        supabase.from('products').select('id, name, variant').is('deleted_at', null),
+        supabase.from('sale_tags').select('id, label').is('deleted_at', null).order('label'),
+        fetchDefaultSaleTagId(supabase),
+      ]);
     if (pErr) {
       toast.error(pErr.message);
       return;
+    }
+    if (tagErr || defErr) {
+      toast.error(tagErr?.message ?? defErr?.message ?? 'Could not load tags');
+      return;
+    }
+
+    const tagList = (tagRows ?? []) as { id: string; label: string }[];
+    function resolveImportTag(raw: string): string | null {
+      const s = raw.trim();
+      if (!s) return defaultTagId ?? null;
+      if (tagList.some((t) => t.id === s)) return s;
+      const lower = s.toLowerCase();
+      const hit = tagList.find((t) => t.label.trim().toLowerCase() === lower);
+      return hit?.id ?? null;
     }
 
     const lookupIndex = buildProductLookupMap(
@@ -185,6 +205,7 @@ export default function SalesPage() {
       saleType: 'B2C' | 'B2B' | 'B2B2C' | null;
       paymentMode: 'cash' | 'online';
       notes: string | null;
+      saleTagId: string;
       lines: { product_id: string; quantity: number; sale_price: number }[];
     };
 
@@ -196,6 +217,8 @@ export default function SalesPage() {
       const date = normalizeDateYmd(dateRaw);
       const paymentMode = getString(r, 'payment_mode').toLowerCase();
       const saleTypeRaw = getString(r, 'sale_type').toUpperCase();
+      const tagRaw = getString(r, 'tag');
+      const resolvedTagId = resolveImportTag(tagRaw);
       const lookupStr = getString(r, 'product_lookup');
       const resolved: ProductLookupResolution = lookupStr
         ? resolveProductLookup(lookupIndex, lookupStr)
@@ -219,8 +242,25 @@ export default function SalesPage() {
       } else if (!productId) {
         issues.push({ row: rowNo, field: 'product_lookup', message: 'no matching product' });
       }
+      if (!resolvedTagId) {
+        issues.push({
+          row: rowNo,
+          field: 'tag',
+          message: 'unknown tag (use label or uuid, or leave empty if business has a default)',
+        });
+      }
 
-      if (!ref || !date || (paymentMode !== 'cash' && paymentMode !== 'online') || qty === null || qty <= 0 || salePrice === null || salePrice < 0 || !productId) {
+      if (
+        !ref ||
+        !date ||
+        (paymentMode !== 'cash' && paymentMode !== 'online') ||
+        qty === null ||
+        qty <= 0 ||
+        salePrice === null ||
+        salePrice < 0 ||
+        !productId ||
+        !resolvedTagId
+      ) {
         return;
       }
 
@@ -235,12 +275,16 @@ export default function SalesPage() {
         saleType,
         paymentMode: paymentMode as 'cash' | 'online',
         notes: getNullableString(r, 'notes'),
+        saleTagId: resolvedTagId,
         lines: [],
       };
 
       if (existing) {
         if (existing.date !== date) issues.push({ row: rowNo, field: 'date', message: 'inconsistent in sale_ref' });
         if (existing.paymentMode !== paymentMode) issues.push({ row: rowNo, field: 'payment_mode', message: 'inconsistent in sale_ref' });
+        if (existing.saleTagId !== resolvedTagId) {
+          issues.push({ row: rowNo, field: 'tag', message: 'inconsistent in sale_ref' });
+        }
       }
 
       draft.rowNos.push(rowNo);
@@ -260,6 +304,7 @@ export default function SalesPage() {
         p_payment_mode: group.paymentMode,
         p_notes: group.notes,
         p_lines: group.lines,
+        p_sale_tag_id: group.saleTagId,
       });
       if (error) {
         issues.push({ row: group.rowNos[0], field: 'sale_ref', message: `${ref}: ${error.message}` });
@@ -315,6 +360,13 @@ export default function SalesPage() {
               <Plus className="h-4 w-4" aria-hidden />
               New Sale
             </Button>
+            <ModuleCsvMenu
+              menuAriaLabel="Sales CSV import"
+              busy={importing}
+              disabled={!ready}
+              onDownloadTemplate={downloadSalesTemplate}
+              onFileSelected={(f) => void importSalesFile(f)}
+            />
           </>
         }
       />
@@ -339,6 +391,7 @@ export default function SalesPage() {
                 <TableRow className="border-border/60 bg-muted/50 hover:bg-muted/50">
                   <TableHead className="ui-table-head py-4">Order #</TableHead>
                   <TableHead className="ui-table-head py-4">Date</TableHead>
+                  <TableHead className="ui-table-head py-4">Tag</TableHead>
                   <TableHead className="ui-table-head py-4">Product</TableHead>
                   <TableHead className="ui-table-head py-4">Category</TableHead>
                   <TableHead className="ui-table-head py-4 text-right">Qty</TableHead>
@@ -354,13 +407,13 @@ export default function SalesPage() {
               <TableBody>
                 {loading ? (
                   <TableRow>
-                    <TableCell colSpan={12} className="py-12 text-center text-muted-foreground">
+                    <TableCell colSpan={13} className="py-12 text-center text-muted-foreground">
                       Loading sales…
                     </TableCell>
                   </TableRow>
                 ) : !rows?.length ? (
                   <TableRow>
-                    <TableCell colSpan={12} className="py-16">
+                    <TableCell colSpan={13} className="py-16">
                       <div className="flex flex-col items-center justify-center gap-2 text-center">
                         <p className="text-sm font-semibold text-foreground">No sales yet</p>
                         <p className="text-sm text-muted-foreground">Record your first sale with New Sale.</p>
@@ -374,9 +427,14 @@ export default function SalesPage() {
                 ) : (
                   rows.map((r) => (
                     <TableRow key={r.sale.id} className="border-border/50">
-                      <TableCell className="font-mono text-xs font-semibold text-foreground">{orderLabel(r.sale.id)}</TableCell>
+                      <TableCell className="font-mono text-[10px] font-medium leading-tight text-foreground md:text-[11px]">
+                        {orderLabel(r.sale.id)}
+                      </TableCell>
                       <TableCell className="whitespace-nowrap text-sm text-muted-foreground">
                         {formatDateShort(r.sale.date)}
+                      </TableCell>
+                      <TableCell className="max-w-[100px] truncate text-sm text-muted-foreground">
+                        {r.sale.sale_tag_label ?? '—'}
                       </TableCell>
                       <TableCell className="max-w-[160px] truncate text-sm font-medium text-foreground">
                         {r.lineSummary.primaryProduct}
@@ -480,8 +538,8 @@ export default function SalesPage() {
           <AlertDialogHeader>
             <AlertDialogTitle>Delete this sale?</AlertDialogTitle>
             <AlertDialogDescription>
-              The sale is removed from lists and reports. Line quantities are returned to inventory. This cannot be undone
-              from the app.
+              The sale row is permanently deleted. Line quantities are returned to inventory (ledger or BOM components).
+              This cannot be undone.
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>

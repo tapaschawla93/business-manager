@@ -13,9 +13,12 @@ import {
   getTopProducts,
   type DashboardDateRange,
   type DashboardKPIs,
+  type DashboardTagFilter,
   type MonthlyPerformanceRow,
   type TopProductsPayload,
 } from '@/lib/queries/dashboard';
+import { fetchSaleTags } from '@/lib/queries/saleTags';
+import type { SaleTag } from '@/lib/types/saleTag';
 import { formatInrDisplay } from '@/lib/formatInr';
 import { PageHeader } from '@/components/PageHeader';
 import { KPICard } from '@/components/dashboard/KPICard';
@@ -25,6 +28,7 @@ import { MonthlyPerformanceChart } from '@/components/dashboard/MonthlyPerforman
 import { DashboardDateRangeControl } from '@/components/dashboard/DashboardDateRangeControl';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Button } from '@/components/ui/button';
+import { Label } from '@/components/ui/label';
 import {
   BarChart3,
   CircleDollarSign,
@@ -36,9 +40,9 @@ import {
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { downloadBackupWorkbook } from '@/lib/excel/downloadBackupWorkbook';
-import { downloadTemplateWorkbook } from '@/lib/excel/downloadTemplateWorkbook';
 import { parseWorkbook } from '@/lib/excel/parseWorkbook';
-import { uploadWorkbook } from '@/lib/excel/uploadWorkbook';
+import { uploadWorkbook, WORKBOOK_UPLOAD_PARTIAL_APPLY_NOTE } from '@/lib/excel/uploadWorkbook';
+import { devError } from '@/lib/devLog';
 
 function DashboardSkeleton({ phase }: { phase: 'session' | 'data' }) {
   return (
@@ -75,17 +79,38 @@ export default function HomePage() {
   const [kpis, setKpis] = useState<DashboardKPIs | null>(null);
   const [topProducts, setTopProducts] = useState<TopProductsPayload | null>(null);
   const [monthlyPerformance, setMonthlyPerformance] = useState<MonthlyPerformanceRow[] | null>(null);
+  const [dashboardSaleTagId, setDashboardSaleTagId] = useState<DashboardTagFilter>(null);
+  const [dashboardTags, setDashboardTags] = useState<SaleTag[]>([]);
 
   const loadDashboardGenRef = useRef(0);
-  const dashboardUploadRef = useRef<HTMLInputElement>(null);
-  const [excelBusy, setExcelBusy] = useState<string | null>(null);
+  const restoreUploadRef = useRef<HTMLInputElement>(null);
+  const [excelBusy, setExcelBusy] = useState<'backup' | 'restore' | null>(null);
 
   useEffect(() => {
     if (!sessionReady) return;
     setAppliedRange(defaultDashboardYtdRange());
   }, [sessionReady]);
 
-  const loadDashboard = useCallback(async (range: DashboardDateRange) => {
+  useEffect(() => {
+    if (!sessionReady) return;
+    let cancelled = false;
+    void (async () => {
+      const supabase = getSupabaseClient();
+      const { data, error: tErr } = await fetchSaleTags(supabase);
+      if (cancelled) return;
+      if (tErr) {
+        toast.error(tErr.message);
+        setDashboardTags([]);
+        return;
+      }
+      setDashboardTags(data ?? []);
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [sessionReady]);
+
+  const loadDashboard = useCallback(async (range: DashboardDateRange, saleTagId: DashboardTagFilter) => {
     const gen = ++loadDashboardGenRef.current;
     const supabase = getSupabaseClient();
     setLoadingDashboard(true);
@@ -94,12 +119,12 @@ export default function HomePage() {
     try {
       const [kpiRes, topRes, monthlyRes] = await withTimeout(
         Promise.all([
-          getDashboardKPIs(supabase, range),
-          getTopProducts(supabase, range),
-          getMonthlyPerformance(supabase, range),
+          getDashboardKPIs(supabase, range, saleTagId),
+          getTopProducts(supabase, range, saleTagId),
+          getMonthlyPerformance(supabase, range, saleTagId),
         ]),
         25_000,
-        'Dashboard request timed out. Apply migrations 20260331130000_expenses_update_inventory_flag.sql and 20260331140000_dashboard_kpis_net_cash_inventory_items.sql on Supabase, then refresh.',
+        'Dashboard request timed out. Apply latest Supabase migrations (including dashboard + sale_tags), then refresh.',
       );
       if (gen !== loadDashboardGenRef.current) return;
       if (kpiRes.error) throw kpiRes.error;
@@ -114,6 +139,9 @@ export default function HomePage() {
       const msg = e instanceof Error ? e.message : 'Failed to load dashboard';
       setError(msg);
       toast.error(msg);
+      setKpis(null);
+      setTopProducts(null);
+      setMonthlyPerformance(null);
     } finally {
       if (gen === loadDashboardGenRef.current) {
         setLoadingDashboard(false);
@@ -123,8 +151,8 @@ export default function HomePage() {
 
   useEffect(() => {
     if (!sessionReady || !appliedRange) return;
-    void loadDashboard(appliedRange);
-  }, [sessionReady, appliedRange, loadDashboard]);
+    void loadDashboard(appliedRange, dashboardSaleTagId);
+  }, [sessionReady, appliedRange, dashboardSaleTagId, loadDashboard]);
 
   if (session.kind === 'loading') {
     return <DashboardSkeleton phase="session" />;
@@ -159,6 +187,8 @@ export default function HomePage() {
       ? `${((kpis.gross_profit / kpis.total_revenue) * 100).toFixed(1)}%`
       : '0.0%';
 
+  const dashboardTagScoped = dashboardSaleTagId !== null;
+
   async function handleDashboardBackup() {
     setExcelBusy('backup');
     try {
@@ -171,23 +201,19 @@ export default function HomePage() {
     }
   }
 
-  function handleDashboardTemplate() {
-    downloadTemplateWorkbook();
-    toast.success('Template downloaded');
-  }
-
-  async function handleDashboardUpload(file: File) {
-    setExcelBusy('upload');
+  async function handleRestoreWorkbook(file: File) {
+    setExcelBusy('restore');
     try {
       const wb = await parseWorkbook(file);
       const summary = await uploadWorkbook(getSupabaseClient(), wb);
-      const msg = `Upload: ${summary.added} added, ${summary.skipped} skipped, ${summary.errors.length} errors.`;
-      toast.success(msg);
+      let msg = `Restore: ${summary.added} added, ${summary.skipped} skipped, ${summary.errors.length} errors.`;
       if (summary.errors.length > 0) {
-        console.error('Workbook upload errors', summary.errors);
+        msg += ` ${WORKBOOK_UPLOAD_PARTIAL_APPLY_NOTE}`;
+        devError('dashboardRestoreWorkbook', summary.errors);
       }
+      toast.success(msg);
     } catch (e) {
-      toast.error(e instanceof Error ? e.message : 'Upload failed');
+      toast.error(e instanceof Error ? e.message : 'Restore failed');
     } finally {
       setExcelBusy(null);
     }
@@ -202,11 +228,11 @@ export default function HomePage() {
       <PageHeader
         className="max-md:gap-2"
         title="Dashboard Overview"
-        description="Operating summary for the selected period: revenue, spend, cash position (sales minus expenses by payment mode), stock on hand at cost, and product/category breakdowns."
+        description="Operating summary for the selected period: revenue; with All tags, ledger expenses—with one tag, product cost (COGS) from sales in that tag; cash position nets sales against that counterparty by payment mode; inventory value is tenant-wide; plus product and category breakdowns."
         actions={
           <>
             <input
-              ref={dashboardUploadRef}
+              ref={restoreUploadRef}
               type="file"
               className="sr-only"
               accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
@@ -215,7 +241,7 @@ export default function HomePage() {
               disabled={excelBusy !== null}
               onChange={(e) => {
                 const file = e.target.files?.[0];
-                if (file) void handleDashboardUpload(file);
+                if (file) void handleRestoreWorkbook(file);
                 e.currentTarget.value = '';
               }}
             />
@@ -227,47 +253,73 @@ export default function HomePage() {
               onClick={() => void handleDashboardBackup()}
             >
               <Download className="h-3.5 w-3.5 md:h-4 md:w-4" aria-hidden />
-              {excelBusy === 'backup' ? 'Downloading…' : 'Backup'}
+              {excelBusy === 'backup' ? 'Downloading…' : 'Export backup (.xlsx)'}
             </Button>
             <Button
               type="button"
               variant="outline"
               className="h-10 gap-2 rounded-xl border-border/80 text-sm font-semibold shadow-sm md:h-11 md:text-base"
               disabled={excelBusy !== null}
-              onClick={handleDashboardTemplate}
-            >
-              <Download className="h-3.5 w-3.5 md:h-4 md:w-4" aria-hidden />
-              Template
-            </Button>
-            <Button
-              type="button"
-              variant="outline"
-              className="h-10 gap-2 rounded-xl border-border/80 text-sm font-semibold shadow-sm md:h-11 md:text-base"
-              disabled={excelBusy !== null}
-              onClick={() => dashboardUploadRef.current?.click()}
+              onClick={() => restoreUploadRef.current?.click()}
             >
               <Upload className="h-3.5 w-3.5 md:h-4 md:w-4" aria-hidden />
-              {excelBusy === 'upload' ? 'Uploading…' : 'Bulk upload'}
+              {excelBusy === 'restore' ? 'Restoring…' : 'Restore'}
             </Button>
           </>
         }
       />
 
+      <p className="text-xs leading-relaxed text-muted-foreground">
+        <Link href="/help" className="font-semibold text-primary underline-offset-4 hover:underline">
+          Import order &amp; CSV help
+        </Link>
+        . Use a backup exported here for Restore, or fill templates from each page&apos;s ⋮ menu.
+      </p>
+
       <DashboardDateRangeControl
+        className="w-full"
         appliedRange={appliedRange}
         onApply={setAppliedRange}
         onYtd={() => setAppliedRange(defaultDashboardYtdRange())}
         disabled={loadingDashboard}
+        endSlot={
+          <div className="flex min-w-0 flex-col gap-1.5">
+            <Label
+              htmlFor="dashboard-sale-tag"
+              className="text-[11px] font-bold uppercase tracking-wide text-muted-foreground"
+            >
+              Scope
+            </Label>
+            <select
+              id="dashboard-sale-tag"
+              className="h-10 w-full rounded-xl border border-input bg-background px-3 text-sm shadow-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring md:h-11 md:text-base"
+              value={dashboardSaleTagId ?? ''}
+              onChange={(e) => setDashboardSaleTagId(e.target.value === '' ? null : e.target.value)}
+              disabled={loadingDashboard}
+            >
+              <option value="">All tags</option>
+              {dashboardTags.map((t) => (
+                <option key={t.id} value={t.id}>
+                  {t.label}
+                </option>
+              ))}
+            </select>
+          </div>
+        }
       />
 
       {error ? <p className="text-sm text-destructive">{error}</p> : null}
 
-      {loadingDashboard && kpis ? (
-        <p className="text-xs text-muted-foreground md:text-sm">Refreshing figures…</p>
-      ) : null}
+      <span aria-live="polite" className="sr-only">
+        {loadingDashboard && kpis ? 'Refreshing dashboard figures.' : ''}
+      </span>
 
       {kpis ? (
-        <>
+        <div
+          className="flex flex-col gap-5 md:gap-8"
+          aria-busy={loadingDashboard}
+          aria-label="Dashboard metrics"
+        >
           <section className="grid grid-cols-2 gap-3 md:gap-4 md:grid-cols-3">
             <KPICard
               icon={<CircleDollarSign className="h-5 w-5" aria-hidden />}
@@ -281,10 +333,14 @@ export default function HomePage() {
             />
             <KPICard
               icon={<CircleDollarSign className="h-5 w-5" aria-hidden />}
-              label="Total Expenses"
+              label={dashboardTagScoped ? 'Product cost' : 'Total Expenses'}
               value={formatInrDisplay(kpis.total_expenses)}
-              hint="Spend in selected period"
-              trendLabel="Recorded"
+              hint={
+                dashboardTagScoped
+                  ? 'COGS: line cost × qty for sales in this tag'
+                  : 'Spend in selected period'
+              }
+              trendLabel={dashboardTagScoped ? 'From sales' : 'Recorded'}
               trendVariant="muted"
               valueClassName="text-finance-negative"
               iconClassName="bg-muted text-muted-foreground"
@@ -293,7 +349,11 @@ export default function HomePage() {
               icon={<TrendingUp className="h-5 w-5" aria-hidden />}
               label="Profit / Loss"
               value={formatInrDisplay(kpis.gross_profit)}
-              hint="Revenue − expenses (period)"
+              hint={
+                dashboardTagScoped
+                  ? 'Revenue − product cost (period)'
+                  : 'Revenue − expenses (period)'
+              }
               trendLabel={profitMarginPct}
               trendVariant="neutral"
               valueClassName={
@@ -305,18 +365,26 @@ export default function HomePage() {
               icon={<Wallet className="h-5 w-5 shrink-0" aria-hidden />}
               label="Cash in Hand"
               value={formatInrDisplay(kpis.cash_in_hand_total)}
-              hint="Net cash + net online for the period"
+              hint={
+                dashboardTagScoped
+                  ? 'Cash + online sales in tag, each minus COGS from sales in that payment mode'
+                  : 'Net cash + net online for the period'
+              }
               trendLabel="Period"
               trendVariant="muted"
               iconClassName="bg-muted text-muted-foreground"
               footer={
                 <div className="space-y-0.5 text-[11px] text-muted-foreground md:text-xs">
                   <p>
-                    <span className="font-medium text-foreground">Net cash: </span>
+                    <span className="font-medium text-foreground">
+                      {dashboardTagScoped ? 'Net cash (after tag COGS): ' : 'Net cash: '}
+                    </span>
                     {formatInrDisplay(kpis.net_cash)}
                   </p>
                   <p>
-                    <span className="font-medium text-foreground">Net online: </span>
+                    <span className="font-medium text-foreground">
+                      {dashboardTagScoped ? 'Net online (after tag COGS): ' : 'Net online: '}
+                    </span>
                     {formatInrDisplay(kpis.net_online)}
                   </p>
                 </div>
@@ -326,7 +394,11 @@ export default function HomePage() {
               icon={<Warehouse className="h-5 w-5 shrink-0" aria-hidden />}
               label="Inventory Value"
               value={formatInrDisplay(kpis.inventory_value)}
-              hint="Manual lines: stock × unit cost (current)"
+              hint={
+                dashboardSaleTagId
+                  ? 'Whole business (not filtered by tag)'
+                  : 'Manual lines: stock × unit cost (current)'
+              }
               trendLabel="Stock"
               trendVariant="neutral"
               iconClassName="bg-muted text-muted-foreground"
@@ -342,7 +414,12 @@ export default function HomePage() {
             />
           </section>
 
-          {monthlyPerformance ? <MonthlyPerformanceChart rows={monthlyPerformance} /> : null}
+          {monthlyPerformance ? (
+            <MonthlyPerformanceChart
+              rows={monthlyPerformance}
+              counterpartyBarName={dashboardTagScoped ? 'Product cost' : 'Expenses'}
+            />
+          ) : null}
 
           <section className="grid gap-3 md:gap-4">
             {topProducts ? <SalesByCategoryTable rows={topProducts.sales_by_category} /> : null}
@@ -357,7 +434,7 @@ export default function HomePage() {
               />
             </section>
           ) : null}
-        </>
+        </div>
       ) : (
         <p className="ui-page-description">No dashboard data yet.</p>
       )}

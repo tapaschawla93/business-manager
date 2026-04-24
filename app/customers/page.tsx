@@ -2,6 +2,15 @@
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { toast } from 'sonner';
+import { downloadCsv, rowsToCsv } from '@/lib/exportCsv';
+import {
+  buildImportIssuesCsv,
+  getNullableString,
+  getString,
+  parseCsv,
+  type ImportIssue,
+} from '@/lib/importCsv';
+import { devError } from '@/lib/devLog';
 import { PageHeader } from '@/components/PageHeader';
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -31,12 +40,17 @@ import { SessionRedirectNotice } from '@/components/SessionRedirectNotice';
 import { useBusinessSession } from '@/lib/auth/useBusinessSession';
 import { getSupabaseClient } from '@/lib/supabaseClient';
 import type { CustomerListRow, CustomerOrderHistoryRow } from '@/lib/types/customer';
-import { fetchCustomerOrderHistory, fetchCustomersList } from '@/lib/queries/customers';
+import {
+  customerPhoneDedupeKey,
+  fetchCustomerOrderHistory,
+  fetchCustomersList,
+} from '@/lib/queries/customers';
 import { CustomersSearchBar } from './components/CustomersSearchBar';
 import { RepeatCustomerToggle } from './components/RepeatCustomerToggle';
 import { CustomersTable } from './components/CustomersTable';
 import { CustomersMobileList } from './components/CustomersMobileList';
 import { CustomerDetailDialog } from './components/CustomerDetailDialog';
+import { ModuleCsvMenu } from '@/components/ModuleCsvMenu';
 
 export default function CustomersPage() {
   const session = useBusinessSession({ onMissingBusiness: 'redirect-home' });
@@ -51,6 +65,7 @@ export default function CustomersPage() {
   const [saving, setSaving] = useState(false);
   const [deleting, setDeleting] = useState<CustomerListRow | null>(null);
   const [editingDraft, setEditingDraft] = useState({ name: '', phone: '', address: '' });
+  const [importing, setImporting] = useState(false);
 
   const load = useCallback(async () => {
     const supabase = getSupabaseClient();
@@ -86,6 +101,7 @@ export default function CustomersPage() {
       customerId: row.customerId,
       phone: row.phone,
       name: row.name,
+      saleIds: row.aggregatedSaleIds,
     });
     if (error) {
       toast.error(error.message);
@@ -154,11 +170,7 @@ export default function CustomersPage() {
   async function confirmDelete() {
     if (!deleting?.customerId) return;
     const supabase = getSupabaseClient();
-    const { error } = await supabase
-      .from('customers')
-      .update({ deleted_at: new Date().toISOString() })
-      .eq('id', deleting.customerId)
-      .is('deleted_at', null);
+    const { error } = await supabase.from('customers').delete().eq('id', deleting.customerId);
     if (error) {
       toast.error(error.message);
       return;
@@ -168,6 +180,103 @@ export default function CustomersPage() {
     void load();
   }
 
+  function downloadCustomersTemplate() {
+    const headers = ['name', 'phone', 'address'];
+    const rows = [{ name: 'Priya Sharma', phone: '9876543210', address: 'Delhi' }];
+    downloadCsv('template_customers.csv', rowsToCsv(headers, rows));
+  }
+
+  const CUSTOMERS_INSERT_BATCH = 50;
+
+  async function importCustomersFile(file: File) {
+    if (session.kind !== 'ready') return;
+    const businessId = session.businessId;
+    setImporting(true);
+    try {
+      const supabase = getSupabaseClient();
+      const text = await file.text();
+      const { rows } = parseCsv(text);
+      const issues: ImportIssue[] = [];
+      const { data: existingRows, error: exErr } = await supabase
+        .from('customers')
+        .select('phone')
+        .eq('business_id', businessId)
+        .is('deleted_at', null);
+      if (exErr) {
+        toast.error(exErr.message);
+        return;
+      }
+      const phonesSeen = new Set(
+        ((existingRows ?? []) as { phone: string | null }[])
+          .map((row) => customerPhoneDedupeKey(row.phone))
+          .filter((k) => k.length > 0),
+      );
+      type PendingRow = {
+        rowNo: number;
+        payload: {
+          business_id: string;
+          name: string;
+          phone: string;
+          address: string | null;
+        };
+      };
+      const pending: PendingRow[] = [];
+      let skipped = 0;
+      for (let idx = 0; idx < rows.length; idx += 1) {
+        const r = rows[idx]!;
+        const rowNo = idx + 2;
+        const phone = getString(r, 'phone');
+        const dedupeKey = customerPhoneDedupeKey(phone);
+        if (!dedupeKey) {
+          skipped += 1;
+          continue;
+        }
+        if (phonesSeen.has(dedupeKey)) {
+          skipped += 1;
+          continue;
+        }
+        phonesSeen.add(dedupeKey);
+        pending.push({
+          rowNo,
+          payload: {
+            business_id: businessId,
+            name: getString(r, 'name') || 'Customer',
+            phone,
+            address: getNullableString(r, 'address'),
+          },
+        });
+      }
+
+      let inserted = 0;
+      for (let i = 0; i < pending.length; i += CUSTOMERS_INSERT_BATCH) {
+        const slice = pending.slice(i, i + CUSTOMERS_INSERT_BATCH);
+        const payloads = slice.map((p) => p.payload);
+        const { error: batchErr } = await supabase.from('customers').insert(payloads);
+        if (!batchErr) {
+          inserted += slice.length;
+          continue;
+        }
+        for (const item of slice) {
+          const { error: rowErr } = await supabase.from('customers').insert(item.payload);
+          if (rowErr) issues.push({ row: item.rowNo, field: 'row', message: rowErr.message });
+          else inserted += 1;
+        }
+      }
+      if (issues.length > 0) {
+        downloadCsv('customers_import_errors.csv', buildImportIssuesCsv(issues));
+      }
+      toast.success(
+        `Customers import: ${inserted} added, ${skipped} skipped (empty or duplicate after phone normalization), ${issues.length} row errors.`,
+      );
+      await load();
+    } catch (e) {
+      devError('customers import', e);
+      toast.error(e instanceof Error ? e.message : 'Customers import failed');
+    } finally {
+      setImporting(false);
+    }
+  }
+
   if (session.kind === 'loading') return <PageLoadingSkeleton />;
   if (session.kind === 'redirect_login') return <SessionRedirectNotice to="login" />;
   if (session.kind === 'redirect_home') return <SessionRedirectNotice to="home" />;
@@ -175,7 +284,19 @@ export default function CustomersPage() {
 
   return (
     <div className="space-y-6">
-      <PageHeader title="Customers" description="Customer directory with repeat-customer insights and order history." />
+      <PageHeader
+        title="Customers"
+        description="Customer directory with repeat-customer insights and order history."
+        actions={
+          <ModuleCsvMenu
+            menuAriaLabel="Customers CSV import"
+            busy={importing}
+            disabled={session.kind !== 'ready'}
+            onDownloadTemplate={downloadCustomersTemplate}
+            onFileSelected={(f) => void importCustomersFile(f)}
+          />
+        }
+      />
       <Card className="border-border/80 shadow-md">
         <CardContent className="space-y-4 p-4 md:p-5">
           <div className="flex flex-col gap-3 md:flex-row md:items-center">
@@ -259,7 +380,8 @@ export default function CustomersPage() {
           <AlertDialogHeader>
             <AlertDialogTitle>Delete customer?</AlertDialogTitle>
             <AlertDialogDescription>
-              This will hide the customer from the list. Sales history remains unchanged.
+              The customer record is permanently removed. Linked sales keep their snapshot name/phone; the customer link is
+              cleared.
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>

@@ -2,7 +2,7 @@
 
 import { FormEvent, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { toast } from 'sonner';
-import { Download, Pencil, Plus, RefreshCw, Search, Trash2, Upload, Package2 } from 'lucide-react';
+import { Pencil, Plus, RefreshCw, Search, Trash2, Package2 } from 'lucide-react';
 import { formatInrDisplay } from '@/lib/formatInr';
 import { downloadCsv, rowsToCsv } from '@/lib/exportCsv';
 import { buildImportIssuesCsv, getOptionalNumber, getRequiredNumber, getString, parseCsv, type ImportIssue } from '@/lib/importCsv';
@@ -27,18 +27,20 @@ import { SessionRedirectNotice } from '@/components/SessionRedirectNotice';
 import { useBusinessSession } from '@/lib/auth/useBusinessSession';
 import { ProductsMobileList } from '@/app/products/components/ProductsMobileList';
 import { getProductMargin, productMarginToneClass } from '@/lib/products/productMargin';
+import { ModuleCsvMenu } from '@/components/ModuleCsvMenu';
 
 function formatProductSaveError(message: string): string {
   const m = message.toLowerCase();
   if (
     message.includes('products_business_id_name_key') ||
     message.includes('products_business_id_name_active_uidx') ||
+    message.includes('products_business_id_name_variant_active_uidx') ||
     (message.includes('duplicate key') && m.includes('products'))
   ) {
     return (
-      'A product with this name already exists among active products. ' +
+      'A product with this name and variant already exists among active products. ' +
       'If you already saved once, click Save again to update and attach components, or pick another name. ' +
-      'You can reuse a name if the only other row with that name is archived.'
+      'You can reuse the same name+variant if the only other row is archived.'
     );
   }
   return message;
@@ -71,7 +73,6 @@ export default function ProductsPage() {
   const [archiveTargetId, setArchiveTargetId] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
   const [importing, setImporting] = useState(false);
-  const productsUploadRef = useRef<HTMLInputElement | null>(null);
   const submitInFlightRef = useRef(false);
   const [inventoryOptions, setInventoryOptions] = useState<Array<{ id: string; name: string }>>([]);
   const [componentsDraft, setComponentsDraft] = useState<ComponentDraft[]>([]);
@@ -354,7 +355,7 @@ export default function ProductsPage() {
       toast.error(delErr.message);
       return;
     }
-    toast.success('Product archived');
+    toast.success('Product deleted');
     if (editingId === id) resetForm();
     await loadProducts();
   }
@@ -378,58 +379,63 @@ export default function ProductsPage() {
   async function importProductsFile(file: File) {
     if (!businessId) return;
     setImporting(true);
-    const text = await file.text();
-    const { rows } = parseCsv(text);
-    const issues: ImportIssue[] = [];
-    const valid: { rowNo: number; payload: Record<string, unknown> }[] = [];
+    try {
+      const text = await file.text();
+      const { rows } = parseCsv(text);
+      const issues: ImportIssue[] = [];
+      const valid: { rowNo: number; payload: Record<string, unknown> }[] = [];
 
-    rows.forEach((r, idx) => {
-      const rowNo = idx + 2;
-      const name = getString(r, 'name');
-      const category = getString(r, 'category');
-      const mrp = getRequiredNumber(r, 'mrp');
-      const cost = getRequiredNumber(r, 'cost_price');
-      const tax = getOptionalNumber(r, 'tax_pct');
+      rows.forEach((r, idx) => {
+        const rowNo = idx + 2;
+        const name = getString(r, 'name');
+        const category = getString(r, 'category');
+        const mrp = getRequiredNumber(r, 'mrp');
+        const cost = getRequiredNumber(r, 'cost_price');
+        const tax = getOptionalNumber(r, 'tax_pct');
 
-      if (!name) issues.push({ row: rowNo, field: 'name', message: 'required' });
-      if (!category) issues.push({ row: rowNo, field: 'category', message: 'required' });
-      if (mrp === null || mrp < 0) issues.push({ row: rowNo, field: 'mrp', message: 'must be >= 0 number' });
-      if (cost === null || cost < 0) issues.push({ row: rowNo, field: 'cost_price', message: 'must be >= 0 number' });
-      if (tax !== null && (tax < 0 || tax > 100)) issues.push({ row: rowNo, field: 'tax_pct', message: 'must be between 0 and 100' });
+        if (!name) issues.push({ row: rowNo, field: 'name', message: 'required' });
+        if (!category) issues.push({ row: rowNo, field: 'category', message: 'required' });
+        if (mrp === null || mrp < 0) issues.push({ row: rowNo, field: 'mrp', message: 'must be >= 0 number' });
+        if (cost === null || cost < 0) issues.push({ row: rowNo, field: 'cost_price', message: 'must be >= 0 number' });
+        if (tax !== null && (tax < 0 || tax > 100)) issues.push({ row: rowNo, field: 'tax_pct', message: 'must be between 0 and 100' });
 
-      if (name && category && mrp !== null && mrp >= 0 && cost !== null && cost >= 0) {
-        valid.push({
-          rowNo,
-          payload: {
-            business_id: businessId,
-            name,
-            category,
-            mrp,
-            cost_price: cost,
-            hsn_code: getString(r, 'hsn_code') || null,
-            tax_pct: tax,
-            variant: getString(r, 'variant') || null,
-          },
-        });
+        if (name && category && mrp !== null && mrp >= 0 && cost !== null && cost >= 0) {
+          valid.push({
+            rowNo,
+            payload: {
+              business_id: businessId,
+              name,
+              category,
+              mrp,
+              cost_price: cost,
+              hsn_code: getString(r, 'hsn_code') || null,
+              tax_pct: tax,
+              variant: getString(r, 'variant') || null,
+            },
+          });
+        }
+      });
+
+      let inserted = 0;
+      if (valid.length > 0) {
+        const supabase = getSupabaseClient();
+        for (const v of valid) {
+          const { error: insErr } = await supabase.from('products').insert(v.payload);
+          if (insErr) issues.push({ row: v.rowNo, field: 'row', message: insErr.message });
+          else inserted += 1;
+        }
+        await loadProducts();
       }
-    });
 
-    let inserted = 0;
-    if (valid.length > 0) {
-      const supabase = getSupabaseClient();
-      for (const v of valid) {
-        const { error: insErr } = await supabase.from('products').insert(v.payload);
-        if (insErr) issues.push({ row: v.rowNo, field: 'row', message: insErr.message });
-        else inserted += 1;
+      if (issues.length > 0) {
+        downloadCsv('products_import_errors.csv', buildImportIssuesCsv(issues));
       }
-      await loadProducts();
+      toast.success(`Products import complete: ${inserted} inserted, ${issues.length} failed.`);
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Import failed');
+    } finally {
+      setImporting(false);
     }
-
-    setImporting(false);
-    if (issues.length > 0) {
-      downloadCsv('products_import_errors.csv', buildImportIssuesCsv(issues));
-    }
-    toast.success(`Products import complete: ${inserted} inserted, ${issues.length} failed.`);
   }
 
   if (session.kind === 'loading') {
@@ -469,6 +475,13 @@ export default function ProductsPage() {
               <Plus className="h-4 w-4" aria-hidden />
               Add Product
             </Button>
+            <ModuleCsvMenu
+              menuAriaLabel="Product CSV import"
+              busy={importing}
+              disabled={!businessId}
+              onDownloadTemplate={downloadProductsTemplate}
+              onFileSelected={(f) => void importProductsFile(f)}
+            />
           </>
         }
       />
@@ -716,8 +729,11 @@ export default function ProductsPage() {
         <Dialog open={archiveTargetId !== null} onOpenChange={(open) => !open && setArchiveTargetId(null)}>
           <DialogContent className="sm:max-w-md">
             <DialogHeader>
-              <DialogTitle>Archive product</DialogTitle>
-              <DialogDescription>Are you sure you want to archive this product?</DialogDescription>
+              <DialogTitle>Delete product</DialogTitle>
+              <DialogDescription>
+                This permanently removes the product if it is not on any sale lines or active expenses. Inventory links are
+                cleared.
+              </DialogDescription>
             </DialogHeader>
             <div className="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
               <Button type="button" variant="outline" onClick={() => setArchiveTargetId(null)}>
@@ -728,7 +744,7 @@ export default function ProductsPage() {
                 className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
                 onClick={() => void confirmArchive()}
               >
-                Archive
+                Delete
               </Button>
             </div>
           </DialogContent>

@@ -1,6 +1,13 @@
 'use client';
 
 import { FormEvent, useCallback, useEffect, useMemo, useState, type ReactNode } from 'react';
+import { SaleTagPicker } from '@/components/SaleTagPicker';
+import {
+  createSaleTag,
+  fetchDefaultSaleTagId,
+  fetchSaleTags,
+} from '@/lib/queries/saleTags';
+import type { SaleTag } from '@/lib/types/saleTag';
 import { toast } from 'sonner';
 import { VendorPicker } from '@/components/VendorPicker';
 import { PaymentToggle } from '@/components/PaymentToggle';
@@ -98,6 +105,27 @@ export function ExpenseForm({
     delta: number;
     unitCost: number;
   } | null>(null);
+  const [saleTags, setSaleTags] = useState<SaleTag[]>([]);
+  const [defaultSaleTagId, setDefaultSaleTagId] = useState<string | null>(null);
+  const [expenseTagId, setExpenseTagId] = useState<string | null>(null);
+
+  const loadSaleTagData = useCallback(async () => {
+    const supabase = getSupabaseClient();
+    const [{ data: tags, error: tErr }, { data: defId, error: dErr }] = await Promise.all([
+      fetchSaleTags(supabase),
+      fetchDefaultSaleTagId(supabase),
+    ]);
+    if (tErr) {
+      toast.error(tErr.message);
+      return;
+    }
+    if (dErr) {
+      toast.error(dErr.message);
+      return;
+    }
+    setSaleTags(tags ?? []);
+    setDefaultSaleTagId(defId);
+  }, []);
 
   const loadVendors = useCallback(async () => {
     const supabase = getSupabaseClient();
@@ -128,6 +156,23 @@ export function ExpenseForm({
     void loadVendors();
     void loadProducts();
   }, [loadVendors, loadProducts]);
+
+  useEffect(() => {
+    if (!businessId) return;
+    void loadSaleTagData();
+  }, [businessId, loadSaleTagData]);
+
+  useEffect(() => {
+    if (editing) {
+      setExpenseTagId(editing.expense_tag_id);
+      return;
+    }
+    const next =
+      defaultSaleTagId && saleTags.some((t) => t.id === defaultSaleTagId)
+        ? defaultSaleTagId
+        : saleTags[0]?.id ?? null;
+    setExpenseTagId(next);
+  }, [editing?.id, defaultSaleTagId, saleTags, editing]);
 
   useEffect(() => {
     setPendingStockLedgerSync(null);
@@ -287,8 +332,13 @@ export function ExpenseForm({
       }
       const p = products.find((x) => x.id === productId);
       const itemDesc = p ? productDisplayLabel(p) : 'Stock purchase';
+      const productCategory = p?.category?.trim() ? p.category.trim() : null;
       const totalAmount = Math.round(q * u * 100) / 100;
 
+      if (!expenseTagId) {
+        setError('Select a tag');
+        return;
+      }
       const common = {
         date: dateIso,
         vendor_name,
@@ -301,7 +351,8 @@ export function ExpenseForm({
         payment_mode: paymentMode,
         notes: notesVal,
         update_inventory: true,
-        category: null as string | null,
+        category: productCategory,
+        expense_tag_id: expenseTagId,
       };
 
       setSaving(true);
@@ -371,6 +422,10 @@ export function ExpenseForm({
     const totalAmount = Math.round(amt * 100) / 100;
     const cat = expenseCategory.trim() || null;
 
+    if (!expenseTagId) {
+      setError('Select a tag');
+      return;
+    }
     const common = {
       date: dateIso,
       vendor_name,
@@ -384,6 +439,7 @@ export function ExpenseForm({
       notes: notesVal,
       update_inventory: false,
       category: cat,
+      expense_tag_id: expenseTagId,
     };
 
     setSaving(true);
@@ -479,6 +535,27 @@ export function ExpenseForm({
                   required
                 />
               </Field>
+
+              <div className="sm:col-span-2">
+                <SaleTagPicker
+                  tags={saleTags}
+                  value={expenseTagId}
+                  onChange={setExpenseTagId}
+                  defaultTagId={defaultSaleTagId}
+                  showDefaultHint
+                  disabled={saving}
+                  onCreateTag={async (label) => {
+                    const supabase = getSupabaseClient();
+                    const { data: row, error: cErr } = await createSaleTag(supabase, businessId, label);
+                    if (cErr) {
+                      toast.error(cErr.message);
+                      return null;
+                    }
+                    await loadSaleTagData();
+                    return row?.id ?? null;
+                  }}
+                />
+              </div>
 
               {isStockPurchase ? (
                 <>

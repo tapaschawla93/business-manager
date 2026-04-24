@@ -26,7 +26,7 @@ function formatDateShort(iso: string): string {
 }
 
 function orderLabel(id: string): string {
-  const compact = id.replace(/-/g, '').slice(0, 8).toUpperCase();
+  const compact = id.replace(/-/g, '').slice(0, 6).toUpperCase();
   return `ORD-${compact}`;
 }
 
@@ -139,7 +139,12 @@ export function SalesMobileList({ rows, loading, onNewSale, onEditSale, onArchiv
                 aria-controls={salePanelId}
                 onClick={() => setOpenSaleId(open ? null : r.sale.id)}
               >
-                <span className="min-w-0 flex-1 truncate font-medium text-foreground">{customer}</span>
+                <span className="min-w-0 flex-1 truncate">
+                  <span className="block font-medium text-foreground">{customer}</span>
+                  {r.sale.sale_tag_label ? (
+                    <span className="block truncate text-[10px] text-muted-foreground">{r.sale.sale_tag_label}</span>
+                  ) : null}
+                </span>
                 <span className="shrink-0 text-xs font-bold tabular-nums text-foreground">
                   {formatInrDisplay(Number(r.sale.total_amount))}
                 </span>
@@ -203,7 +208,7 @@ export function SalesMobileList({ rows, loading, onNewSale, onEditSale, onArchiv
                 >
                   <div className="space-y-1">
                     <p className="text-[11px] font-medium text-muted-foreground">Order</p>
-                    <p className="font-mono text-xs font-semibold tabular-nums text-foreground">
+                    <p className="font-mono text-[10px] font-medium tabular-nums leading-tight text-foreground">
                       {orderLabel(r.sale.id)}
                     </p>
                   </div>

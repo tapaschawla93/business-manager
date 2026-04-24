@@ -18,6 +18,8 @@ export type CustomerListRow = {
   orderCount: number;
   totalSpent: number;
   lastOrderDate: string | null;
+  /** When present, order history loads via these sale IDs (accurate after phone-normalized merge). */
+  aggregatedSaleIds?: string[];
 };
 
 export type CustomerOrderHistoryRow = {

@@ -1,4 +1,5 @@
 import {
+  CircleHelp,
   LayoutDashboard,
   Package2,
   ShoppingCart,
@@ -18,6 +19,7 @@ export const MAIN_NAV_ITEMS: ReadonlyArray<{ href: string; label: string; Icon: 
   { href: '/customers', label: 'Customers', Icon: Users },
   { href: '/vendors', label: 'Vendors', Icon: Truck },
   { href: '/inventory', label: 'Inventory', Icon: Warehouse },
+  { href: '/help', label: 'Help', Icon: CircleHelp },
 ];
 
 export function isMainNavActive(pathname: string, href: string): boolean {

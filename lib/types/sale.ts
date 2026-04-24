@@ -2,6 +2,8 @@
 export type Sale = {
   id: string;
   business_id: string;
+  /** FK to `sale_tags` (required for new rows after sale-tags migration). */
+  sale_tag_id: string;
   date: string;
   customer_name: string | null;
   customer_phone: string | null;

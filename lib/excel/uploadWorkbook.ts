@@ -1,6 +1,7 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import type { ParsedWorkbook } from './parseWorkbook';
 import { keyCustomers, keyExpenses, keyInventory, keyProducts, keySales, keyVendors } from './dedupeRules';
+import { normalizeProductNameKey, resolveSaleProductId } from './resolveSaleProductId';
 
 export type UploadSummary = {
   added: number;
@@ -8,18 +9,58 @@ export type UploadSummary = {
   errors: Array<{ sheet: string; row: number; reason: string }>;
 };
 
+/** Shown when the upload had row-level errors: each sheet commits in order; earlier sheets are not rolled back. */
+export const WORKBOOK_UPLOAD_PARTIAL_APPLY_NOTE =
+  'Successful rows are already saved. Fix failed rows and re-upload if needed.';
+
+/**
+ * Imports workbook sheets in order (Products → Inventory → … → Sales → Expenses). Each insert/RPC commits
+ * independently — a failure on a later sheet does not undo earlier sheets.
+ */
 export async function uploadWorkbook(
   supabase: SupabaseClient,
   wb: ParsedWorkbook,
 ): Promise<UploadSummary> {
   const summary: UploadSummary = { added: 0, skipped: 0, errors: [] };
   const { data: profile } = await supabase.from('profiles').select('business_id').single();
-  const businessId = profile?.business_id as string | undefined;
-  if (!businessId) throw new Error('No business profile');
+  const rawBid = profile?.business_id;
+  if (typeof rawBid !== 'string' || rawBid.length === 0) {
+    throw new Error('No business profile');
+  }
+  const businessId = rawBid;
+
+  const { data: busRow } = await supabase
+    .from('businesses')
+    .select('default_sale_tag_id')
+    .eq('id', businessId)
+    .maybeSingle();
+  const defaultSaleTagId = busRow?.default_sale_tag_id as string | undefined;
+
+  const { data: tagRows } = await supabase
+    .from('sale_tags')
+    .select('id, label')
+    .is('deleted_at', null)
+    .order('label');
+  const tagList = (tagRows ?? []) as { id: string; label: string }[];
+
+  /** Empty, placeholder, or unknown → default when set; else match uuid or case-insensitive label. */
+  function resolveSaleTagId(raw: unknown): string | null {
+    const s = String(raw ?? '').trim();
+    if (!s || s.startsWith('<')) return defaultSaleTagId ?? null;
+    const byId = tagList.find((t) => t.id === s);
+    if (byId) return byId.id;
+    const lower = s.toLowerCase();
+    const byLabel = tagList.find((t) => t.label.trim().toLowerCase() === lower);
+    return byLabel?.id ?? null;
+  }
 
   const [existingProducts, existingInventory, existingCustomers, existingVendors, existingSales, existingExpenses] =
     await Promise.all([
-      supabase.from('products').select('name, category').is('deleted_at', null),
+      supabase
+        .from('products')
+        .select('id, name, category, variant')
+        .eq('business_id', businessId)
+        .is('deleted_at', null),
       supabase.from('inventory_items').select('name'),
       supabase.from('customers').select('phone').is('deleted_at', null),
       supabase.from('vendors').select('name').is('deleted_at', null),
@@ -27,9 +68,20 @@ export async function uploadWorkbook(
       supabase.from('expenses').select('date, vendor_name, item_description, total_amount').is('deleted_at', null),
     ]);
 
-  const productKeys = new Set(((existingProducts.data ?? []) as Record<string, unknown>[]).map(keyProducts));
+  const productRows = (existingProducts.data ?? []) as { id: string; name: string; category: string; variant: string | null }[];
+  const productKeys = new Set(productRows.map((p) => keyProducts(p)));
+  /** Resolve sale lines by name (case/space insensitive) — seeded from DB, then new inserts in this file. */
+  const productIdByNormalizedName = new Map<string, string>();
+  for (const p of productRows) {
+    const k = normalizeProductNameKey(String(p.name ?? ''));
+    if (k) productIdByNormalizedName.set(k, p.id);
+  }
   const inventoryKeys = new Set(((existingInventory.data ?? []) as Record<string, unknown>[]).map(keyInventory));
-  const customerKeys = new Set(((existingCustomers.data ?? []) as Record<string, unknown>[]).map(keyCustomers));
+  const customerKeys = new Set(
+    ((existingCustomers.data ?? []) as Record<string, unknown>[])
+      .map(keyCustomers)
+      .filter((k) => k.length > 0),
+  );
   const vendorKeys = new Set(((existingVendors.data ?? []) as Record<string, unknown>[]).map(keyVendors));
   const salesKeys = new Set(((existingSales.data ?? []) as Record<string, unknown>[]).map(keySales));
   const expenseKeys = new Set(((existingExpenses.data ?? []) as Record<string, unknown>[]).map(keyExpenses));
@@ -42,17 +94,24 @@ export async function uploadWorkbook(
       summary.skipped += 1;
       continue;
     }
-    const { error } = await supabase.from('products').insert({
-      business_id: businessId,
-      name: String(row.name ?? '').trim(),
-      category: String(row.category ?? '').trim(),
-      mrp: Number(row.mrp ?? 0),
-      cost_price: Number(row.cost_price ?? 0),
-      variant: String(row.variant ?? '').trim() || null,
-    });
+    const nameTrim = String(row.name ?? '').trim();
+    const { data: insertedProduct, error } = await supabase
+      .from('products')
+      .insert({
+        business_id: businessId,
+        name: nameTrim,
+        category: String(row.category ?? '').trim(),
+        mrp: Number(row.mrp ?? 0),
+        cost_price: Number(row.cost_price ?? 0),
+        variant: String(row.variant ?? '').trim() || null,
+      })
+      .select('id')
+      .single();
     if (error) summary.errors.push({ sheet: 'Products', row: i + 2, reason: error.message });
-    else {
+    else if (insertedProduct?.id) {
       productKeys.add(key);
+      const nk = normalizeProductNameKey(nameTrim);
+      if (nk) productIdByNormalizedName.set(nk, insertedProduct.id);
       summary.added += 1;
     }
   }
@@ -80,9 +139,10 @@ export async function uploadWorkbook(
     }
   }
 
-  // 3) Customers
+  // 3) Customers — dedupe on digit-normalized key; persist trimmed source string as `phone`.
   for (let i = 0; i < wb.Customers.length; i++) {
     const row = wb.Customers[i];
+    const phoneRaw = String(row.phone ?? '').trim();
     const key = keyCustomers(row);
     if (!key || customerKeys.has(key)) {
       summary.skipped += 1;
@@ -91,7 +151,7 @@ export async function uploadWorkbook(
     const { error } = await supabase.from('customers').insert({
       business_id: businessId,
       name: String(row.name ?? '').trim(),
-      phone: key || null,
+      phone: phoneRaw || null,
       address: String(row.address ?? '').trim() || null,
     });
     if (error) summary.errors.push({ sheet: 'Customers', row: i + 2, reason: error.message });
@@ -133,11 +193,25 @@ export async function uploadWorkbook(
       summary.skipped += 1;
       continue;
     }
-    const productId = String(row.product_id ?? '').trim();
+    const resolved = resolveSaleProductId(row, productIdByNormalizedName);
+    if (!resolved.ok) {
+      summary.errors.push({ sheet: 'Sales', row: i + 2, reason: resolved.message });
+      continue;
+    }
+    const productId = resolved.productId;
     const qty = Number(row.quantity ?? 0);
     const salePrice = Number(row.sale_price ?? 0);
-    if (!productId || qty <= 0 || salePrice < 0) {
-      summary.errors.push({ sheet: 'Sales', row: i + 2, reason: 'product_id/quantity/sale_price invalid' });
+    if (qty <= 0 || salePrice < 0) {
+      summary.errors.push({ sheet: 'Sales', row: i + 2, reason: 'quantity/sale_price invalid' });
+      continue;
+    }
+    const saleTagId = resolveSaleTagId(row.sale_tag_id);
+    if (!saleTagId) {
+      summary.errors.push({
+        sheet: 'Sales',
+        row: i + 2,
+        reason: 'sale_tag_id missing or unknown (uuid, label, or empty for default)',
+      });
       continue;
     }
     const { error } = await supabase.rpc('save_sale', {
@@ -149,6 +223,7 @@ export async function uploadWorkbook(
       p_payment_mode: String(row.payment_mode ?? '').trim().toLowerCase(),
       p_notes: String(row.notes ?? '').trim() || null,
       p_lines: [{ product_id: productId, quantity: qty, sale_price: salePrice }],
+      p_sale_tag_id: saleTagId,
     });
     if (error) summary.errors.push({ sheet: 'Sales', row: i + 2, reason: error.message });
     else {
@@ -165,6 +240,15 @@ export async function uploadWorkbook(
       summary.skipped += 1;
       continue;
     }
+    const expenseTagId = resolveSaleTagId(row.expense_tag_id);
+    if (!expenseTagId) {
+      summary.errors.push({
+        sheet: 'Expenses',
+        row: i + 2,
+        reason: 'expense_tag_id missing or unknown (uuid, label, or empty for default)',
+      });
+      continue;
+    }
     const { error } = await supabase.from('expenses').insert({
       business_id: businessId,
       date: String(row.date ?? ''),
@@ -175,6 +259,7 @@ export async function uploadWorkbook(
       total_amount: Number(row.total_amount ?? 0),
       payment_mode: String(row.payment_mode ?? 'cash').trim().toLowerCase(),
       update_inventory: false,
+      expense_tag_id: expenseTagId,
     });
     if (error) summary.errors.push({ sheet: 'Expenses', row: i + 2, reason: error.message });
     else {

@@ -18,6 +18,7 @@ $$ language plpgsql;
 create table if not exists public.businesses (
   id uuid primary key default gen_random_uuid(),
   name text not null,
+  owner_user_id uuid references auth.users (id) on delete set null,
   deleted_at timestamptz,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
@@ -29,6 +30,44 @@ before update on public.businesses
 for each row
 execute function public.set_current_timestamp_updated_at();
 
+alter table public.businesses
+  add column if not exists default_sale_tag_id uuid;
+
+alter table public.businesses
+  add column if not exists owner_user_id uuid references auth.users (id) on delete set null;
+
+-- -----------------------------------------------------------------------------
+-- 1b) Sale tags (tenant dictionary; FK targets wired after sales/expenses exist)
+-- -----------------------------------------------------------------------------
+create table if not exists public.sale_tags (
+  id uuid primary key default gen_random_uuid(),
+  business_id uuid not null references public.businesses (id) on delete restrict,
+  label text not null,
+  deleted_at timestamptz,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  constraint sale_tags_label_nonempty check (btrim(label) <> '')
+);
+
+create index if not exists sale_tags_business_id_idx on public.sale_tags (business_id);
+
+create unique index if not exists sale_tags_business_label_active_uidx
+  on public.sale_tags (business_id, lower(btrim(label)))
+  where deleted_at is null;
+
+drop trigger if exists set_sale_tags_updated_at on public.sale_tags;
+create trigger set_sale_tags_updated_at
+before update on public.sale_tags
+for each row
+execute function public.set_current_timestamp_updated_at();
+
+alter table public.businesses
+  drop constraint if exists businesses_default_sale_tag_id_fkey;
+
+alter table public.businesses
+  add constraint businesses_default_sale_tag_id_fkey
+  foreign key (default_sale_tag_id) references public.sale_tags (id) on delete set null;
+
 -- -----------------------------------------------------------------------------
 -- 2) Profiles
 -- -----------------------------------------------------------------------------
@@ -38,13 +77,45 @@ create table if not exists public.profiles (
   full_name text,
   deleted_at timestamptz,
   created_at timestamptz not null default now(),
-  updated_at timestamptz not null default now(),
-  constraint profiles_business_id_key unique (business_id)
+  updated_at timestamptz not null default now()
 );
+
+alter table public.profiles
+  drop constraint if exists profiles_business_id_key;
 
 drop trigger if exists set_profiles_updated_at on public.profiles;
 create trigger set_profiles_updated_at
 before update on public.profiles
+for each row
+execute function public.set_current_timestamp_updated_at();
+
+-- -----------------------------------------------------------------------------
+-- 2b) Team invitations
+-- -----------------------------------------------------------------------------
+create table if not exists public.business_invitations (
+  id uuid primary key default gen_random_uuid(),
+  business_id uuid not null references public.businesses (id) on delete cascade,
+  invited_email text not null,
+  invited_email_norm text not null,
+  invited_by uuid not null references auth.users (id) on delete restrict,
+  status text not null default 'pending' check (status in ('pending', 'accepted', 'revoked', 'expired')),
+  accepted_by uuid references auth.users (id) on delete set null,
+  accepted_at timestamptz,
+  expires_at timestamptz not null default (now() + interval '7 days'),
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
+create index if not exists business_invitations_business_idx
+  on public.business_invitations (business_id, status, expires_at);
+
+create unique index if not exists business_invitations_pending_email_uidx
+  on public.business_invitations (business_id, invited_email_norm)
+  where status = 'pending';
+
+drop trigger if exists set_business_invitations_updated_at on public.business_invitations;
+create trigger set_business_invitations_updated_at
+before update on public.business_invitations
 for each row
 execute function public.set_current_timestamp_updated_at();
 
@@ -64,6 +135,333 @@ as $$
     and deleted_at is null;
 $$;
 
+alter table public.sale_tags enable row level security;
+
+drop policy if exists "sale_tags_select" on public.sale_tags;
+drop policy if exists "sale_tags_insert" on public.sale_tags;
+drop policy if exists "sale_tags_update" on public.sale_tags;
+
+create policy "sale_tags_select"
+  on public.sale_tags
+  for select
+  using (
+    business_id = public.current_business_id()
+    and deleted_at is null
+  );
+
+create policy "sale_tags_insert"
+  on public.sale_tags
+  for insert
+  with check (business_id = public.current_business_id());
+
+create policy "sale_tags_update"
+  on public.sale_tags
+  for update
+  using (
+    business_id = public.current_business_id()
+    and deleted_at is null
+  )
+  with check (
+    exists (
+      select 1
+      from public.profiles p
+      where p.id = auth.uid()
+        and p.deleted_at is null
+        and p.business_id = business_id
+    )
+  );
+
+drop policy if exists "sale_tags_delete" on public.sale_tags;
+create policy "sale_tags_delete"
+  on public.sale_tags
+  for delete
+  using (business_id = public.current_business_id());
+
+grant select, insert, update, delete on public.sale_tags to authenticated;
+
+create or replace function public.is_current_user_business_owner(p_business_id uuid default null)
+returns boolean
+language sql
+stable
+security definer
+set search_path = public
+as $$
+  select exists (
+    select 1
+    from public.businesses b
+    where b.id = coalesce(p_business_id, public.current_business_id())
+      and b.owner_user_id = auth.uid()
+      and b.deleted_at is null
+  );
+$$;
+
+create or replace function public.create_business_invitation(p_invited_email text)
+returns table (
+  id uuid,
+  invited_email text,
+  expires_at timestamptz
+)
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_business_id uuid;
+  v_email text;
+  v_email_norm text;
+  v_pending_count integer;
+begin
+  if auth.uid() is null then
+    raise exception 'Not authenticated';
+  end if;
+
+  v_business_id := public.current_business_id();
+  if v_business_id is null then
+    raise exception 'No business profile found';
+  end if;
+  if not public.is_current_user_business_owner(v_business_id) then
+    raise exception 'Only the business creator can invite members';
+  end if;
+
+  v_email := coalesce(trim(p_invited_email), '');
+  if v_email = '' then
+    raise exception 'Invite email is required';
+  end if;
+  if position('@' in v_email) <= 1 then
+    raise exception 'Invite email is invalid';
+  end if;
+  v_email_norm := lower(v_email);
+
+  update public.business_invitations bi
+  set status = 'expired'
+  where bi.business_id = v_business_id
+    and bi.status = 'pending'
+    and bi.expires_at <= now();
+
+  select count(*)
+    into v_pending_count
+  from public.business_invitations bi
+  where bi.business_id = v_business_id
+    and bi.status = 'pending'
+    and bi.expires_at > now();
+  if v_pending_count >= 3 then
+    raise exception 'Maximum of 3 pending invites reached';
+  end if;
+
+  if exists (
+    select 1
+    from public.profiles p
+    join auth.users u on u.id = p.id
+    where p.business_id = v_business_id
+      and p.deleted_at is null
+      and lower(u.email) = v_email_norm
+  ) then
+    raise exception 'This email already belongs to a member in your business';
+  end if;
+
+  insert into public.business_invitations (business_id, invited_email, invited_email_norm, invited_by)
+  values (v_business_id, v_email, v_email_norm, auth.uid())
+  returning business_invitations.id, business_invitations.invited_email, business_invitations.expires_at
+  into id, invited_email, expires_at;
+
+  return next;
+end;
+$$;
+
+create or replace function public.list_business_members()
+returns table (
+  user_id uuid,
+  email text,
+  full_name text,
+  created_at timestamptz,
+  is_owner boolean
+)
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_business_id uuid;
+begin
+  if auth.uid() is null then
+    raise exception 'Not authenticated';
+  end if;
+  v_business_id := public.current_business_id();
+  if v_business_id is null then
+    raise exception 'No business profile found';
+  end if;
+  if not public.is_current_user_business_owner(v_business_id) then
+    raise exception 'Only the business creator can view team members';
+  end if;
+
+  return query
+  select
+    p.id as user_id,
+    u.email::text as email,
+    p.full_name,
+    p.created_at,
+    (b.owner_user_id = p.id) as is_owner
+  from public.profiles p
+  join public.businesses b on b.id = p.business_id
+  left join auth.users u on u.id = p.id
+  where p.business_id = v_business_id
+    and p.deleted_at is null
+  order by
+    (b.owner_user_id = p.id) desc,
+    p.created_at asc;
+end;
+$$;
+
+create or replace function public.list_business_pending_invitations()
+returns table (
+  id uuid,
+  invited_email text,
+  expires_at timestamptz,
+  created_at timestamptz
+)
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_business_id uuid;
+begin
+  if auth.uid() is null then
+    raise exception 'Not authenticated';
+  end if;
+  v_business_id := public.current_business_id();
+  if v_business_id is null then
+    raise exception 'No business profile found';
+  end if;
+  if not public.is_current_user_business_owner(v_business_id) then
+    raise exception 'Only the business creator can view invitations';
+  end if;
+
+  update public.business_invitations bi
+  set status = 'expired'
+  where bi.business_id = v_business_id
+    and bi.status = 'pending'
+    and bi.expires_at <= now();
+
+  return query
+  select bi.id, bi.invited_email, bi.expires_at, bi.created_at
+  from public.business_invitations bi
+  where bi.business_id = v_business_id
+    and bi.status = 'pending'
+  order by bi.created_at desc;
+end;
+$$;
+
+create or replace function public.revoke_business_invitation(p_invitation_id uuid)
+returns void
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_business_id uuid;
+begin
+  if auth.uid() is null then
+    raise exception 'Not authenticated';
+  end if;
+  v_business_id := public.current_business_id();
+  if not public.is_current_user_business_owner(v_business_id) then
+    raise exception 'Only the business creator can revoke invitations';
+  end if;
+
+  update public.business_invitations bi
+  set status = 'revoked'
+  where bi.id = p_invitation_id
+    and bi.business_id = v_business_id
+    and bi.status = 'pending';
+end;
+$$;
+
+create or replace function public.remove_business_member(p_user_id uuid)
+returns void
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_business_id uuid;
+begin
+  if auth.uid() is null then
+    raise exception 'Not authenticated';
+  end if;
+  v_business_id := public.current_business_id();
+  if not public.is_current_user_business_owner(v_business_id) then
+    raise exception 'Only the business creator can remove members';
+  end if;
+  if p_user_id = auth.uid() then
+    raise exception 'Business creator cannot remove themselves';
+  end if;
+
+  update public.profiles p
+  set deleted_at = now()
+  where p.id = p_user_id
+    and p.business_id = v_business_id
+    and p.deleted_at is null;
+end;
+$$;
+
+create or replace function public.accept_business_invitation_for_current_user()
+returns uuid
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_existing_business_id uuid;
+  v_email_norm text;
+  v_invite record;
+begin
+  if auth.uid() is null then
+    raise exception 'Not authenticated';
+  end if;
+
+  v_email_norm := lower(coalesce(auth.jwt()->>'email', ''));
+  if v_email_norm = '' then
+    return null;
+  end if;
+
+  select p.business_id into v_existing_business_id
+  from public.profiles p
+  where p.id = auth.uid()
+    and p.deleted_at is null;
+
+  select bi.id, bi.business_id
+    into v_invite
+  from public.business_invitations bi
+  where bi.invited_email_norm = v_email_norm
+    and bi.status = 'pending'
+    and bi.expires_at > now()
+  order by bi.created_at desc
+  limit 1;
+
+  if v_invite.id is null then
+    return v_existing_business_id;
+  end if;
+  if v_existing_business_id is not null and v_existing_business_id <> v_invite.business_id then
+    raise exception 'This account already belongs to another business';
+  end if;
+
+  insert into public.profiles (id, business_id)
+  values (auth.uid(), v_invite.business_id)
+  on conflict (id) do update
+    set business_id = excluded.business_id,
+        deleted_at = null;
+
+  update public.business_invitations
+  set status = 'accepted',
+      accepted_by = auth.uid(),
+      accepted_at = now()
+  where id = v_invite.id;
+
+  return v_invite.business_id;
+end;
+$$;
+
 create or replace function public.create_business_for_user(p_business_name text default 'My Business')
 returns uuid
 language plpgsql
@@ -74,6 +472,7 @@ declare
   v_business_id uuid;
   v_existing uuid;
   v_name text;
+  v_tag_id uuid;
 begin
   if auth.uid() is null then
     raise exception 'Not authenticated';
@@ -90,18 +489,44 @@ begin
 
   v_name := coalesce(nullif(trim(p_business_name), ''), 'My Business');
 
-  insert into public.businesses (name)
-  values (v_name)
+  insert into public.businesses (name, owner_user_id)
+  values (v_name, auth.uid())
   returning id into v_business_id;
 
+  insert into public.sale_tags (business_id, label)
+  values (v_business_id, 'General')
+  returning id into v_tag_id;
+
+  update public.businesses
+  set default_sale_tag_id = v_tag_id
+  where id = v_business_id;
+
   insert into public.profiles (id, business_id)
-  values (auth.uid(), v_business_id);
+  values (auth.uid(), v_business_id)
+  on conflict (id) do update
+    set business_id = excluded.business_id,
+        deleted_at = null;
 
   return v_business_id;
 end;
 $$;
 
+revoke all on function public.is_current_user_business_owner(uuid) from public;
+revoke all on function public.create_business_invitation(text) from public;
+revoke all on function public.list_business_members() from public;
+revoke all on function public.list_business_pending_invitations() from public;
+revoke all on function public.revoke_business_invitation(uuid) from public;
+revoke all on function public.remove_business_member(uuid) from public;
+revoke all on function public.accept_business_invitation_for_current_user() from public;
 revoke all on function public.create_business_for_user(text) from public;
+
+grant execute on function public.is_current_user_business_owner(uuid) to authenticated;
+grant execute on function public.create_business_invitation(text) to authenticated;
+grant execute on function public.list_business_members() to authenticated;
+grant execute on function public.list_business_pending_invitations() to authenticated;
+grant execute on function public.revoke_business_invitation(uuid) to authenticated;
+grant execute on function public.remove_business_member(uuid) to authenticated;
+grant execute on function public.accept_business_invitation_for_current_user() to authenticated;
 grant execute on function public.create_business_for_user(text) to authenticated;
 
 -- -----------------------------------------------------------------------------
@@ -109,6 +534,7 @@ grant execute on function public.create_business_for_user(text) to authenticated
 -- -----------------------------------------------------------------------------
 alter table public.businesses enable row level security;
 alter table public.profiles enable row level security;
+alter table public.business_invitations enable row level security;
 
 drop policy if exists "Select own business" on public.businesses;
 drop policy if exists "Update own business" on public.businesses;
@@ -145,6 +571,9 @@ create policy "Update own profile"
     )
   );
 
+revoke all on table public.business_invitations from public;
+grant select, insert, update on table public.business_invitations to authenticated;
+
 -- -----------------------------------------------------------------------------
 -- 3) Products
 -- -----------------------------------------------------------------------------
@@ -170,9 +599,10 @@ create table if not exists public.products (
 
 create index if not exists products_business_id_idx on public.products (business_id);
 
--- Unique name per business among active products only (archived rows may reuse names).
-create unique index if not exists products_business_id_name_active_uidx
-  on public.products (business_id, name)
+-- Unique (name, variant) per business among active products only (archived rows may reuse keys).
+-- Variant null is treated like empty string for uniqueness.
+create unique index if not exists products_business_id_name_variant_active_uidx
+  on public.products (business_id, name, coalesce(variant, ''))
   where deleted_at is null;
 
 drop trigger if exists set_products_updated_at on public.products;
@@ -253,6 +683,11 @@ create index if not exists sales_business_id_idx on public.sales (business_id);
 create index if not exists sale_items_sale_id_idx on public.sale_items (sale_id);
 create index if not exists sale_items_product_id_idx on public.sale_items (product_id);
 
+alter table public.sales
+  add column if not exists sale_tag_id uuid references public.sale_tags (id) on delete set null;
+
+create index if not exists sales_sale_tag_id_idx on public.sales (sale_tag_id);
+
 drop trigger if exists set_sales_updated_at on public.sales;
 create trigger set_sales_updated_at
 before update on public.sales
@@ -301,6 +736,24 @@ create policy "sale_items_select"
         and s.deleted_at is null
     )
   );
+
+drop policy if exists "sale_items_delete" on public.sale_items;
+create policy "sale_items_delete"
+  on public.sale_items
+  for delete
+  using (
+    exists (
+      select 1 from public.sales s
+      where s.id = sale_items.sale_id
+        and s.business_id = public.current_business_id()
+    )
+  );
+
+drop policy if exists "sales_delete" on public.sales;
+create policy "sales_delete"
+  on public.sales
+  for delete
+  using (business_id = public.current_business_id());
 
 -- -----------------------------------------------------------------------------
 -- 4b) Vendors (tenant directory; optional link from expenses.vendor_id)
@@ -787,7 +1240,7 @@ create table if not exists public.expenses (
   business_id uuid not null references public.businesses (id) on delete restrict,
   date timestamptz not null default now(),
   vendor_name text not null,
-  vendor_id uuid references public.vendors (id) on delete restrict,
+  vendor_id uuid references public.vendors (id) on delete set null,
   item_description text not null,
   product_id uuid references public.products (id) on delete restrict,
   quantity numeric(10, 3) not null check (quantity > 0),
@@ -801,6 +1254,11 @@ create table if not exists public.expenses (
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
 );
+
+alter table public.expenses
+  add column if not exists expense_tag_id uuid references public.sale_tags (id) on delete set null;
+
+create index if not exists expenses_expense_tag_id_idx on public.expenses (expense_tag_id);
 
 comment on column public.expenses.update_inventory is
   'When true and product_id is set, expense quantity adjusts inventory via expenses_sync_inventory trigger.';
@@ -854,6 +1312,51 @@ create policy "expenses_update"
     )
   );
 
+-- Enforce product/vendor refs on INSERT and when those columns change on UPDATE
+-- (so tag-only or other updates do not fail for legacy rows with archived products).
+create or replace function public.expenses_validate_refs()
+returns trigger
+language plpgsql
+set search_path = public
+as $$
+begin
+  if new.product_id is not null then
+    if tg_op = 'UPDATE' and old.product_id is not distinct from new.product_id then
+      null;
+    elsif not exists (
+      select 1
+      from public.products pr
+      where pr.id = new.product_id
+        and pr.business_id = new.business_id
+        and pr.deleted_at is null
+    ) then
+      raise exception 'Expense product_id must reference an active product in this business';
+    end if;
+  end if;
+
+  if new.vendor_id is not null then
+    if tg_op = 'UPDATE' and old.vendor_id is not distinct from new.vendor_id then
+      null;
+    elsif not exists (
+      select 1
+      from public.vendors v
+      where v.id = new.vendor_id
+        and v.business_id = new.business_id
+    ) then
+      raise exception 'Expense vendor_id must reference a vendor in this business';
+    end if;
+  end if;
+
+  return new;
+end;
+$$;
+
+drop trigger if exists expenses_validate_refs_trigger on public.expenses;
+create trigger expenses_validate_refs_trigger
+before insert or update on public.expenses
+for each row
+execute function public.expenses_validate_refs();
+
 create or replace function public.expenses_sync_inventory()
 returns trigger
 language plpgsql
@@ -877,164 +1380,7 @@ create trigger expenses_sync_inventory_trigger
   execute function public.expenses_sync_inventory();
 
 -- -----------------------------------------------------------------------------
--- save_sale RPC (see migration file for full body; duplicated here for greenfield)
--- -----------------------------------------------------------------------------
-create or replace function public.save_sale(
-  p_date date,
-  p_customer_name text,
-  p_payment_mode text,
-  p_notes text,
-  p_lines jsonb,
-  p_customer_phone text default null,
-  p_customer_address text default null,
-  p_sale_type text default null
-)
-returns jsonb
-language plpgsql
-security definer
-set search_path = public
-as $$
-declare
-  v_bid uuid;
-  v_sale_id uuid;
-  v_elem jsonb;
-  v_product_id uuid;
-  v_qty numeric;
-  v_sale_price numeric;
-  v_mrp numeric;
-  v_cost numeric;
-  v_vs_mrp numeric;
-  v_line_profit numeric;
-  v_total_amount numeric := 0;
-  v_total_cost numeric := 0;
-  v_line_rev numeric;
-  v_line_cost numeric;
-begin
-  if auth.uid() is null then
-    raise exception 'Not authenticated';
-  end if;
-
-  v_bid := public.current_business_id();
-  if v_bid is null then
-    raise exception 'No business context';
-  end if;
-
-  if p_payment_mode is null or p_payment_mode not in ('cash', 'online') then
-    raise exception 'Invalid payment_mode';
-  end if;
-
-  if p_sale_type is not null and p_sale_type not in ('B2C', 'B2B', 'B2B2C') then
-    raise exception 'Invalid sale_type';
-  end if;
-
-  if p_lines is null or jsonb_typeof(p_lines) <> 'array' or jsonb_array_length(p_lines) = 0 then
-    raise exception 'At least one line item required';
-  end if;
-
-  insert into public.sales (
-    business_id,
-    date,
-    customer_name,
-    customer_phone,
-    customer_address,
-    sale_type,
-    payment_mode,
-    total_amount,
-    total_cost,
-    total_profit,
-    notes
-  ) values (
-    v_bid,
-    p_date,
-    nullif(trim(coalesce(p_customer_name, '')), ''),
-    nullif(trim(coalesce(p_customer_phone, '')), ''),
-    nullif(trim(coalesce(p_customer_address, '')), ''),
-    p_sale_type,
-    p_payment_mode,
-    0,
-    0,
-    0,
-    nullif(trim(p_notes), '')
-  )
-  returning id into v_sale_id;
-
-  for v_elem in
-    select elem from jsonb_array_elements(p_lines) with ordinality as t(elem, _ord)
-  loop
-    v_product_id := (v_elem->>'product_id')::uuid;
-    v_qty := (v_elem->>'quantity')::numeric;
-    v_sale_price := (v_elem->>'sale_price')::numeric;
-
-    if v_qty is null or v_qty <= 0 then
-      raise exception 'Invalid quantity';
-    end if;
-    if v_sale_price is null or v_sale_price < 0 then
-      raise exception 'Invalid sale_price';
-    end if;
-
-    select p.mrp, p.cost_price into v_mrp, v_cost
-    from public.products p
-    where p.id = v_product_id
-      and p.business_id = v_bid
-      and p.deleted_at is null;
-
-    if not found then
-      raise exception 'Product not found or inactive';
-    end if;
-
-    perform public.inventory_apply_delta(v_bid, v_product_id, -v_qty);
-
-    v_vs_mrp := round((v_sale_price - v_mrp)::numeric, 2);
-    v_line_profit := round(((v_sale_price - v_cost) * v_qty)::numeric, 2);
-    v_line_rev := round((v_sale_price * v_qty)::numeric, 2);
-    v_line_cost := round((v_cost * v_qty)::numeric, 2);
-
-    v_total_amount := v_total_amount + v_line_rev;
-    v_total_cost := v_total_cost + v_line_cost;
-
-    insert into public.sale_items (
-      sale_id,
-      product_id,
-      quantity,
-      sale_price,
-      cost_price_snapshot,
-      mrp_snapshot,
-      vs_mrp,
-      profit
-    ) values (
-      v_sale_id,
-      v_product_id,
-      v_qty,
-      v_sale_price,
-      v_cost,
-      v_mrp,
-      v_vs_mrp,
-      v_line_profit
-    );
-  end loop;
-
-  update public.sales
-  set
-    total_amount = round(v_total_amount, 2),
-    total_cost = round(v_total_cost, 2),
-    total_profit = round(v_total_amount - v_total_cost, 2)
-  where id = v_sale_id
-    and business_id = v_bid;
-
-  return jsonb_build_object(
-    'sale_id', v_sale_id,
-    'total_amount', (select total_amount from public.sales where id = v_sale_id),
-    'total_cost', (select total_cost from public.sales where id = v_sale_id),
-    'total_profit', (select total_profit from public.sales where id = v_sale_id)
-  );
-end;
-$$;
-
-revoke all on function public.save_sale(date, text, text, text, jsonb, text, text, text) from public;
-grant execute on function public.save_sale(date, text, text, text, jsonb, text, text, text) to authenticated;
-
--- -----------------------------------------------------------------------------
--- Archive RPCs (SECURITY DEFINER — tenant check via profiles, then UPDATE bypasses RLS)
+-- "Archive" RPCs (SECURITY DEFINER): permanent DELETE from DB + referential cleanup.
 -- -----------------------------------------------------------------------------
 create or replace function public.archive_product(p_product_id uuid)
 returns void
@@ -1058,8 +1404,42 @@ begin
     raise exception 'No business context';
   end if;
 
-  update public.products
-  set deleted_at = now()
+  if not exists (
+    select 1
+    from public.products pr
+    where pr.id = p_product_id
+      and pr.business_id = v_bid
+      and pr.deleted_at is null
+  ) then
+    raise exception 'Product not found, already archived, or access denied';
+  end if;
+
+  if exists (
+    select 1 from public.sale_items si where si.product_id = p_product_id
+  ) then
+    raise exception 'Cannot delete product: it is referenced by sales lines. Remove or change those sales first.';
+  end if;
+
+  if exists (
+    select 1
+    from public.expenses e
+    where e.product_id = p_product_id
+      and e.business_id = v_bid
+      and e.deleted_at is null
+  ) then
+    raise exception 'Cannot delete product: it is referenced by active expenses.';
+  end if;
+
+  update public.inventory_items
+  set product_id = null, updated_at = now()
+  where product_id = p_product_id
+    and business_id = v_bid;
+
+  delete from public.inventory
+  where product_id = p_product_id
+    and business_id = v_bid;
+
+  delete from public.products
   where id = p_product_id
     and business_id = v_bid
     and deleted_at is null;
@@ -1073,7 +1453,10 @@ $$;
 revoke all on function public.archive_product(uuid) from public;
 grant execute on function public.archive_product(uuid) to authenticated;
 
-create or replace function public.archive_expense(p_expense_id uuid)
+create or replace function public.archive_expense(
+  p_expense_id uuid,
+  p_reverse_inventory boolean default false
+)
 returns void
 language plpgsql
 security definer
@@ -1081,6 +1464,7 @@ set search_path = public
 as $$
 declare
   v_bid uuid;
+  r public.expenses%rowtype;
 begin
   if auth.uid() is null then
     raise exception 'Not authenticated';
@@ -1095,8 +1479,25 @@ begin
     raise exception 'No business context';
   end if;
 
-  update public.expenses
-  set deleted_at = now()
+  select * into r
+  from public.expenses e
+  where e.id = p_expense_id
+    and e.business_id = v_bid
+    and e.deleted_at is null;
+
+  if not found then
+    raise exception 'Expense not found, already archived, or access denied';
+  end if;
+
+  if p_reverse_inventory and r.update_inventory and r.product_id is not null then
+    perform public.inventory_apply_delta_for_tenant(
+      v_bid,
+      r.product_id,
+      -(r.quantity)::numeric
+    );
+  end if;
+
+  delete from public.expenses
   where id = p_expense_id
     and business_id = v_bid
     and deleted_at is null;
@@ -1107,8 +1508,11 @@ begin
 end;
 $$;
 
-revoke all on function public.archive_expense(uuid) from public;
-grant execute on function public.archive_expense(uuid) to authenticated;
+comment on function public.archive_expense(uuid, boolean) is
+  'Hard-deletes expense rows; optional inventory reversal for stock-purchase rows when p_reverse_inventory=true.';
+
+revoke all on function public.archive_expense(uuid, boolean) from public;
+grant execute on function public.archive_expense(uuid, boolean) to authenticated;
 
 create or replace function public.archive_vendor(p_vendor_id uuid)
 returns void
@@ -1132,8 +1536,7 @@ begin
     raise exception 'No business context';
   end if;
 
-  update public.vendors
-  set deleted_at = now()
+  delete from public.vendors
   where id = p_vendor_id
     and business_id = v_bid
     and deleted_at is null;
@@ -1205,8 +1608,8 @@ begin
     end loop;
   end loop;
 
-  update public.sales
-  set deleted_at = now()
+  delete from public.sale_items where sale_id = p_sale_id;
+  delete from public.sales
   where id = p_sale_id
     and business_id = v_bid
     and deleted_at is null;
@@ -1219,166 +1622,6 @@ $$;
 
 revoke all on function public.archive_sale(uuid) from public;
 grant execute on function public.archive_sale(uuid) to authenticated;
-
-create or replace function public.update_sale(
-  p_sale_id uuid,
-  p_date date,
-  p_customer_name text,
-  p_payment_mode text,
-  p_notes text,
-  p_lines jsonb,
-  p_customer_phone text default null,
-  p_customer_address text default null,
-  p_sale_type text default null
-)
-returns jsonb
-language plpgsql
-security definer
-set search_path = public
-as $$
-declare
-  v_bid uuid;
-  r record;
-  v_elem jsonb;
-  v_product_id uuid;
-  v_qty numeric;
-  v_sale_price numeric;
-  v_mrp numeric;
-  v_cost numeric;
-  v_vs_mrp numeric;
-  v_line_profit numeric;
-  v_total_amount numeric := 0;
-  v_total_cost numeric := 0;
-  v_line_rev numeric;
-  v_line_cost numeric;
-begin
-  if auth.uid() is null then
-    raise exception 'Not authenticated';
-  end if;
-
-  v_bid := public.current_business_id();
-  if v_bid is null then
-    raise exception 'No business context';
-  end if;
-
-  if not exists (
-    select 1 from public.sales s
-    where s.id = p_sale_id and s.business_id = v_bid and s.deleted_at is null
-  ) then
-    raise exception 'Sale not found, archived, or access denied';
-  end if;
-
-  if p_payment_mode is null or p_payment_mode not in ('cash', 'online') then
-    raise exception 'Invalid payment_mode';
-  end if;
-
-  if p_sale_type is not null and p_sale_type not in ('B2C', 'B2B', 'B2B2C') then
-    raise exception 'Invalid sale_type';
-  end if;
-
-  if p_lines is null or jsonb_typeof(p_lines) <> 'array' or jsonb_array_length(p_lines) = 0 then
-    raise exception 'At least one line item required';
-  end if;
-
-  for r in
-    select si.product_id, si.quantity
-    from public.sale_items si
-    where si.sale_id = p_sale_id
-  loop
-    perform public.inventory_apply_delta(v_bid, r.product_id, r.quantity);
-  end loop;
-
-  delete from public.sale_items where sale_id = p_sale_id;
-
-  update public.sales
-  set
-    date = p_date,
-    customer_name = nullif(trim(coalesce(p_customer_name, '')), ''),
-    customer_phone = nullif(trim(coalesce(p_customer_phone, '')), ''),
-    customer_address = nullif(trim(coalesce(p_customer_address, '')), ''),
-    sale_type = p_sale_type,
-    payment_mode = p_payment_mode,
-    notes = nullif(trim(coalesce(p_notes, '')), ''),
-    total_amount = 0,
-    total_cost = 0,
-    total_profit = 0
-  where id = p_sale_id
-    and business_id = v_bid;
-
-  for v_elem in
-    select elem from jsonb_array_elements(p_lines) with ordinality as t(elem, _ord)
-  loop
-    v_product_id := (v_elem->>'product_id')::uuid;
-    v_qty := (v_elem->>'quantity')::numeric;
-    v_sale_price := (v_elem->>'sale_price')::numeric;
-
-    if v_qty is null or v_qty <= 0 then
-      raise exception 'Invalid quantity';
-    end if;
-    if v_sale_price is null or v_sale_price < 0 then
-      raise exception 'Invalid sale_price';
-    end if;
-
-    select p.mrp, p.cost_price into v_mrp, v_cost
-    from public.products p
-    where p.id = v_product_id
-      and p.business_id = v_bid
-      and p.deleted_at is null;
-
-    if not found then
-      raise exception 'Product not found or inactive';
-    end if;
-
-    perform public.inventory_apply_delta(v_bid, v_product_id, -v_qty);
-
-    v_vs_mrp := round((v_sale_price - v_mrp)::numeric, 2);
-    v_line_profit := round(((v_sale_price - v_cost) * v_qty)::numeric, 2);
-    v_line_rev := round((v_sale_price * v_qty)::numeric, 2);
-    v_line_cost := round((v_cost * v_qty)::numeric, 2);
-
-    v_total_amount := v_total_amount + v_line_rev;
-    v_total_cost := v_total_cost + v_line_cost;
-
-    insert into public.sale_items (
-      sale_id,
-      product_id,
-      quantity,
-      sale_price,
-      cost_price_snapshot,
-      mrp_snapshot,
-      vs_mrp,
-      profit
-    ) values (
-      p_sale_id,
-      v_product_id,
-      v_qty,
-      v_sale_price,
-      v_cost,
-      v_mrp,
-      v_vs_mrp,
-      v_line_profit
-    );
-  end loop;
-
-  update public.sales
-  set
-    total_amount = round(v_total_amount, 2),
-    total_cost = round(v_total_cost, 2),
-    total_profit = round(v_total_amount - v_total_cost, 2)
-  where id = p_sale_id
-    and business_id = v_bid;
-
-  return jsonb_build_object(
-    'sale_id', p_sale_id,
-    'total_amount', (select total_amount from public.sales where id = p_sale_id),
-    'total_cost', (select total_cost from public.sales where id = p_sale_id),
-    'total_profit', (select total_profit from public.sales where id = p_sale_id)
-  );
-end;
-$$;
-
-revoke all on function public.update_sale(uuid, date, text, text, text, jsonb, text, text, text) from public;
-grant execute on function public.update_sale(uuid, date, text, text, text, jsonb, text, text, text) to authenticated;
 
 create or replace function public.delete_inventory_item(p_item_id uuid)
 returns void
@@ -1435,7 +1678,11 @@ grant execute on function public.delete_inventory_item(uuid) to authenticated;
 -- Dashboard RPCs (read-only): date-scoped KPIs, top products, category split
 -- -----------------------------------------------------------------------------
 
-create or replace function public.get_dashboard_kpis(p_from date, p_to date)
+create or replace function public.get_dashboard_kpis(
+  p_from date,
+  p_to date,
+  p_sale_tag_id uuid default null
+)
 returns table (
   total_revenue numeric(12, 2),
   total_expenses numeric(12, 2),
@@ -1471,6 +1718,18 @@ begin
     raise exception 'No business context';
   end if;
 
+  if p_sale_tag_id is not null then
+    if not exists (
+      select 1
+      from public.sale_tags st
+      where st.id = p_sale_tag_id
+        and st.business_id = v_bid
+        and st.deleted_at is null
+    ) then
+      raise exception 'Invalid sale tag';
+    end if;
+  end if;
+
   return query
   with
   sales_agg as (
@@ -1484,17 +1743,46 @@ begin
       and s.deleted_at is null
       and s.date >= p_from
       and s.date <= p_to
+      and (p_sale_tag_id is null or s.sale_tag_id = p_sale_tag_id)
   ),
-  expenses_agg as (
-    select
-      sum(e.total_amount)::numeric(12, 2) as total_expenses,
-      sum(e.total_amount) filter (where e.payment_mode = 'cash')::numeric(12, 2) as cash_expenses,
-      sum(e.total_amount) filter (where e.payment_mode = 'online')::numeric(12, 2) as online_expenses
-    from public.expenses e
-    where e.business_id = v_bid
-      and e.deleted_at is null
-      and (e.date::date) >= p_from
-      and (e.date::date) <= p_to
+  -- All tags: operating expenses. Single tag: COGS from sale_items for sales in that tag.
+  counter_agg as (
+    select * from (
+      select
+        coalesce(sum(e.total_amount), 0)::numeric(12, 2) as total_out,
+        coalesce(sum(e.total_amount) filter (where e.payment_mode = 'cash'), 0)::numeric(12, 2) as cash_out,
+        coalesce(sum(e.total_amount) filter (where e.payment_mode = 'online'), 0)::numeric(12, 2) as online_out
+      from public.expenses e
+      where e.business_id = v_bid
+        and e.deleted_at is null
+        and (e.date::date) >= p_from
+        and (e.date::date) <= p_to
+    ) x
+    where p_sale_tag_id is null
+    union all
+    select * from (
+      select
+        coalesce(
+          sum(round((si.quantity * si.cost_price_snapshot)::numeric, 2)),
+          0
+        )::numeric(12, 2) as total_out,
+        coalesce(
+          sum(round((si.quantity * si.cost_price_snapshot)::numeric, 2)) filter (where s.payment_mode = 'cash'),
+          0
+        )::numeric(12, 2) as cash_out,
+        coalesce(
+          sum(round((si.quantity * si.cost_price_snapshot)::numeric, 2)) filter (where s.payment_mode = 'online'),
+          0
+        )::numeric(12, 2) as online_out
+      from public.sale_items si
+      join public.sales s on s.id = si.sale_id
+      where s.business_id = v_bid
+        and s.deleted_at is null
+        and s.date >= p_from
+        and s.date <= p_to
+        and s.sale_tag_id = p_sale_tag_id
+    ) y
+    where p_sale_tag_id is not null
   ),
   inv_val as (
     select
@@ -1507,14 +1795,14 @@ begin
   )
   select
     coalesce(sa.total_revenue, 0)::numeric(12, 2) as total_revenue,
-    coalesce(ea.total_expenses, 0)::numeric(12, 2) as total_expenses,
+    coalesce(ca.total_out, 0)::numeric(12, 2) as total_expenses,
     coalesce(iv.inventory_value, 0)::numeric(12, 2) as inventory_value,
-    (coalesce(sa.total_revenue, 0) - coalesce(ea.total_expenses, 0))::numeric(12, 2) as gross_profit,
-    (coalesce(sa.cash_sales, 0) - coalesce(ea.cash_expenses, 0))::numeric(12, 2) as net_cash,
-    (coalesce(sa.online_sales, 0) - coalesce(ea.online_expenses, 0))::numeric(12, 2) as net_online,
+    (coalesce(sa.total_revenue, 0) - coalesce(ca.total_out, 0))::numeric(12, 2) as gross_profit,
+    (coalesce(sa.cash_sales, 0) - coalesce(ca.cash_out, 0))::numeric(12, 2) as net_cash,
+    (coalesce(sa.online_sales, 0) - coalesce(ca.online_out, 0))::numeric(12, 2) as net_online,
     (
-      (coalesce(sa.cash_sales, 0) - coalesce(ea.cash_expenses, 0))
-      + (coalesce(sa.online_sales, 0) - coalesce(ea.online_expenses, 0))
+      (coalesce(sa.cash_sales, 0) - coalesce(ca.cash_out, 0))
+      + (coalesce(sa.online_sales, 0) - coalesce(ca.online_out, 0))
     )::numeric(12, 2) as cash_in_hand_total,
     coalesce(sa.sales_count, 0)::bigint as sales_count,
     case
@@ -1522,15 +1810,19 @@ begin
       else (coalesce(sa.total_revenue, 0) / coalesce(sa.sales_count, 0))::numeric(12, 2)
     end as average_sale_value
   from sales_agg sa
-  cross join expenses_agg ea
+  cross join counter_agg ca
   cross join inv_val iv;
 end;
 $$;
 
-revoke all on function public.get_dashboard_kpis(date, date) from public;
-grant execute on function public.get_dashboard_kpis(date, date) to authenticated;
+revoke all on function public.get_dashboard_kpis(date, date, uuid) from public;
+grant execute on function public.get_dashboard_kpis(date, date, uuid) to authenticated;
 
-create or replace function public.get_top_products(p_from date, p_to date)
+create or replace function public.get_top_products(
+  p_from date,
+  p_to date,
+  p_sale_tag_id uuid default null
+)
 returns jsonb
 language plpgsql
 security definer
@@ -1556,6 +1848,18 @@ begin
     raise exception 'No business context';
   end if;
 
+  if p_sale_tag_id is not null then
+    if not exists (
+      select 1
+      from public.sale_tags st
+      where st.id = p_sale_tag_id
+        and st.business_id = v_bid
+        and st.deleted_at is null
+    ) then
+      raise exception 'Invalid sale tag';
+    end if;
+  end if;
+
   return (
     with
     line_base as (
@@ -1575,6 +1879,7 @@ begin
         and s.deleted_at is null
         and s.date >= p_from
         and s.date <= p_to
+        and (p_sale_tag_id is null or s.sale_tag_id = p_sale_tag_id)
     ),
     product_aggs as (
       select
@@ -1623,6 +1928,7 @@ begin
         and s.deleted_at is null
         and s.date >= p_from
         and s.date <= p_to
+        and (p_sale_tag_id is null or s.sale_tag_id = p_sale_tag_id)
         and p.deleted_at is null
         and p.business_id = v_bid
       group by p.category
@@ -1701,8 +2007,8 @@ begin
 end;
 $$;
 
-revoke all on function public.get_top_products(date, date) from public;
-grant execute on function public.get_top_products(date, date) to authenticated;
+revoke all on function public.get_top_products(date, date, uuid) from public;
+grant execute on function public.get_top_products(date, date, uuid) to authenticated;
 
 -- -----------------------------------------------------------------------------
 -- V3 foundation: customers + sales.customer_id + product_components
@@ -1756,17 +2062,31 @@ create policy "customers_update"
     business_id = public.current_business_id()
     and deleted_at is null
   )
-  with check (business_id = public.current_business_id());
+  with check (
+    exists (
+      select 1
+      from public.profiles p
+      where p.id = auth.uid()
+        and p.deleted_at is null
+        and p.business_id = business_id
+    )
+  );
+
+drop policy if exists "customers_delete" on public.customers;
+create policy "customers_delete"
+  on public.customers
+  for delete
+  using (business_id = public.current_business_id());
 
 alter table public.sales
-  add column if not exists customer_id uuid references public.customers (id) on delete restrict;
+  add column if not exists customer_id uuid references public.customers (id) on delete set null;
 
 create index if not exists sales_customer_id_idx on public.sales (customer_id);
 
 create table if not exists public.product_components (
   id uuid primary key default gen_random_uuid(),
   product_id uuid not null references public.products (id) on delete cascade,
-  inventory_item_id uuid not null references public.inventory_items (id) on delete restrict,
+  inventory_item_id uuid not null references public.inventory_items (id) on delete cascade,
   quantity_per_unit numeric(10, 3) not null check (quantity_per_unit > 0),
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now(),
@@ -1864,7 +2184,8 @@ create or replace function public.save_sale(
   p_lines jsonb,
   p_customer_phone text default null,
   p_customer_address text default null,
-  p_sale_type text default null
+  p_sale_type text default null,
+  p_sale_tag_id uuid default null
 )
 returns jsonb
 language plpgsql
@@ -1901,6 +2222,20 @@ begin
   if v_bid is null then
     raise exception 'No business context';
   end if;
+
+  if p_sale_tag_id is null then
+    raise exception 'sale_tag_id is required';
+  end if;
+  if not exists (
+    select 1
+    from public.sale_tags st
+    where st.id = p_sale_tag_id
+      and st.business_id = v_bid
+      and st.deleted_at is null
+  ) then
+    raise exception 'Invalid sale tag';
+  end if;
+
   if p_payment_mode is null or p_payment_mode not in ('cash', 'online') then
     raise exception 'Invalid payment_mode';
   end if;
@@ -1949,7 +2284,8 @@ begin
     total_amount,
     total_cost,
     total_profit,
-    notes
+    notes,
+    sale_tag_id
   ) values (
     v_bid,
     v_customer_id,
@@ -1960,7 +2296,8 @@ begin
     p_sale_type,
     p_payment_mode,
     0, 0, 0,
-    nullif(trim(p_notes), '')
+    nullif(trim(p_notes), ''),
+    p_sale_tag_id
   )
   returning id into v_sale_id;
 
@@ -2045,8 +2382,8 @@ begin
 end;
 $$;
 
-revoke all on function public.save_sale(date, text, text, text, jsonb, text, text, text) from public;
-grant execute on function public.save_sale(date, text, text, text, jsonb, text, text, text) to authenticated;
+revoke all on function public.save_sale(date, text, text, text, jsonb, text, text, text, uuid) from public;
+grant execute on function public.save_sale(date, text, text, text, jsonb, text, text, text, uuid) to authenticated;
 
 create or replace function public.update_sale(
   p_sale_id uuid,
@@ -2057,7 +2394,8 @@ create or replace function public.update_sale(
   p_lines jsonb,
   p_customer_phone text default null,
   p_customer_address text default null,
-  p_sale_type text default null
+  p_sale_type text default null,
+  p_sale_tag_id uuid default null
 )
 returns jsonb
 language plpgsql
@@ -2094,6 +2432,20 @@ begin
   if v_bid is null then
     raise exception 'No business context';
   end if;
+
+  if p_sale_tag_id is null then
+    raise exception 'sale_tag_id is required';
+  end if;
+  if not exists (
+    select 1
+    from public.sale_tags st
+    where st.id = p_sale_tag_id
+      and st.business_id = v_bid
+      and st.deleted_at is null
+  ) then
+    raise exception 'Invalid sale tag';
+  end if;
+
   if not exists (
     select 1 from public.sales s
     where s.id = p_sale_id and s.business_id = v_bid and s.deleted_at is null
@@ -2174,6 +2526,7 @@ begin
     sale_type = p_sale_type,
     payment_mode = p_payment_mode,
     notes = nullif(trim(coalesce(p_notes, '')), ''),
+    sale_tag_id = p_sale_tag_id,
     total_amount = 0,
     total_cost = 0,
     total_profit = 0
@@ -2261,15 +2614,16 @@ begin
 end;
 $$;
 
-revoke all on function public.update_sale(uuid, date, text, text, text, jsonb, text, text, text) from public;
-grant execute on function public.update_sale(uuid, date, text, text, text, jsonb, text, text, text) to authenticated;
+revoke all on function public.update_sale(uuid, date, text, text, text, jsonb, text, text, text, uuid) from public;
+grant execute on function public.update_sale(uuid, date, text, text, text, jsonb, text, text, text, uuid) to authenticated;
 
 -- -----------------------------------------------------------------------------
 -- V3 Dashboard RPC: monthly performance (zero-filled)
 -- -----------------------------------------------------------------------------
 create or replace function public.get_monthly_performance(
   p_from date,
-  p_to date
+  p_to date,
+  p_sale_tag_id uuid default null
 )
 returns table (
   month int,
@@ -2302,6 +2656,18 @@ begin
     raise exception 'No business context';
   end if;
 
+  if p_sale_tag_id is not null then
+    if not exists (
+      select 1
+      from public.sale_tags st
+      where st.id = p_sale_tag_id
+        and st.business_id = v_bid
+        and st.deleted_at is null
+    ) then
+      raise exception 'Invalid sale tag';
+    end if;
+  end if;
+
   v_start_month := date_trunc('month', p_from)::date;
   v_end_month := date_trunc('month', p_to)::date;
 
@@ -2318,31 +2684,52 @@ begin
       and s.deleted_at is null
       and s.date >= p_from
       and s.date <= p_to
+      and (p_sale_tag_id is null or s.sale_tag_id = p_sale_tag_id)
     group by 1
   ),
-  expenses_monthly as (
+  expense_monthly as (
     select
       date_trunc('month', (e.date::date)::timestamp)::date as month_start,
-      sum(e.total_amount)::numeric(12, 2) as expenses
+      sum(e.total_amount)::numeric(12, 2) as amt
     from public.expenses e
     where e.business_id = v_bid
       and e.deleted_at is null
       and (e.date::date) >= p_from
       and (e.date::date) <= p_to
+      and p_sale_tag_id is null
     group by 1
+  ),
+  cogs_monthly as (
+    select
+      date_trunc('month', s.date::timestamp)::date as month_start,
+      sum(round((si.quantity * si.cost_price_snapshot)::numeric, 2))::numeric(12, 2) as amt
+    from public.sale_items si
+    join public.sales s on s.id = si.sale_id
+    where s.business_id = v_bid
+      and s.deleted_at is null
+      and s.date >= p_from
+      and s.date <= p_to
+      and p_sale_tag_id is not null
+      and s.sale_tag_id = p_sale_tag_id
+    group by 1
+  ),
+  cost_or_expense_monthly as (
+    select * from expense_monthly
+    union all
+    select * from cogs_monthly
   )
   select
     extract(month from ms.month_start)::int as month,
     extract(year from ms.month_start)::int as year,
     coalesce(sm.revenue, 0)::numeric(12, 2) as revenue,
-    coalesce(em.expenses, 0)::numeric(12, 2) as expenses,
-    (coalesce(sm.revenue, 0) - coalesce(em.expenses, 0))::numeric(12, 2) as profit
+    coalesce(ce.amt, 0)::numeric(12, 2) as expenses,
+    (coalesce(sm.revenue, 0) - coalesce(ce.amt, 0))::numeric(12, 2) as profit
   from month_series ms
   left join sales_monthly sm on sm.month_start = ms.month_start
-  left join expenses_monthly em on em.month_start = ms.month_start
+  left join cost_or_expense_monthly ce on ce.month_start = ms.month_start
   order by ms.month_start;
 end;
 $$;
 
-revoke all on function public.get_monthly_performance(date, date) from public;
-grant execute on function public.get_monthly_performance(date, date) to authenticated;
+revoke all on function public.get_monthly_performance(date, date, uuid) from public;
+grant execute on function public.get_monthly_performance(date, date, uuid) to authenticated;

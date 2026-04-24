@@ -1,9 +1,9 @@
 'use client';
 
-import { FormEvent, useCallback, useEffect, useRef, useState } from 'react';
+import { FormEvent, useCallback, useEffect, useState } from 'react';
 import Link from 'next/link';
 import { toast } from 'sonner';
-import { Download, Pencil, Plus, RefreshCw, Trash2, Truck, Upload } from 'lucide-react';
+import { Pencil, Plus, RefreshCw, Trash2, Truck } from 'lucide-react';
 import { downloadCsv, rowsToCsv } from '@/lib/exportCsv';
 import {
   buildImportIssuesCsv,
@@ -32,11 +32,12 @@ import {
 } from '@/components/ui/dialog';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { VendorsMobileList } from '@/app/vendors/components/VendorsMobileList';
+import { ModuleCsvMenu } from '@/components/ModuleCsvMenu';
+import { devError } from '@/lib/devLog';
 
 export default function VendorsPage() {
   const session = useBusinessSession({ onMissingBusiness: 'redirect-home' });
   const businessId = session.kind === 'ready' ? session.businessId : null;
-  const uploadRef = useRef<HTMLInputElement | null>(null);
   const [vendors, setVendors] = useState<Vendor[]>([]);
   const [loading, setLoading] = useState(true);
   const [importing, setImporting] = useState(false);
@@ -97,6 +98,7 @@ export default function VendorsPage() {
   async function importVendorsFile(file: File) {
     if (!businessId) return;
     setImporting(true);
+    try {
     const text = await file.text();
     const { rows } = parseCsv(text);
     const issues: ImportIssue[] = [];
@@ -133,11 +135,16 @@ export default function VendorsPage() {
       await load();
     }
 
-    setImporting(false);
     if (issues.length > 0) {
       downloadCsv('vendors_import_errors.csv', buildImportIssuesCsv(issues));
     }
     toast.success(`Vendors import complete: ${inserted} inserted, ${issues.length} issues.`);
+    } catch (e) {
+      devError('vendors import', e);
+      toast.error(e instanceof Error ? e.message : 'Vendors import failed');
+    } finally {
+      setImporting(false);
+    }
   }
 
   async function handleCreate(e: FormEvent) {
@@ -175,7 +182,7 @@ export default function VendorsPage() {
       toast.error(arcErr.message);
       return;
     }
-    toast.success('Vendor archived');
+    toast.success('Vendor deleted');
     await load();
   }
 
@@ -220,6 +227,13 @@ export default function VendorsPage() {
               <Plus className="h-4 w-4" />
               Add vendor
             </Button>
+            <ModuleCsvMenu
+              menuAriaLabel="Vendors CSV import"
+              busy={importing}
+              disabled={!businessId}
+              onDownloadTemplate={downloadVendorsTemplate}
+              onFileSelected={(f) => void importVendorsFile(f)}
+            />
           </div>
         }
       />
@@ -361,9 +375,10 @@ export default function VendorsPage() {
       <Dialog open={archiveTargetId !== null} onOpenChange={(open) => !open && setArchiveTargetId(null)}>
         <DialogContent className="sm:max-w-md">
           <DialogHeader>
-            <DialogTitle>Archive vendor</DialogTitle>
+            <DialogTitle>Delete vendor</DialogTitle>
             <DialogDescription>
-              Hides this vendor from the directory and picker. Past expenses linked to this vendor stay as-is.
+              Permanently removes this vendor. Expenses that pointed at them keep their text fields; the vendor link is
+              cleared.
             </DialogDescription>
           </DialogHeader>
           <div className="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
@@ -375,7 +390,7 @@ export default function VendorsPage() {
               className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
               onClick={() => void confirmArchive()}
             >
-              Archive
+              Delete
             </Button>
           </div>
         </DialogContent>

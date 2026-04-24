@@ -24,6 +24,13 @@ import type { Customer } from '@/lib/types/customer';
 import type { SaleListRow } from '@/lib/queries/salesList';
 import { fetchCustomersList } from '@/lib/queries/customers';
 import { saleRpcUserHint } from '@/lib/saleRpcUserHint';
+import { SaleTagPicker } from '@/components/SaleTagPicker';
+import {
+  createSaleTag,
+  fetchDefaultSaleTagId,
+  fetchSaleTags,
+} from '@/lib/queries/saleTags';
+import type { SaleTag } from '@/lib/types/saleTag';
 
 function newLocalId(): string {
   return `${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
@@ -131,6 +138,10 @@ export function SalesForm({
   const [customerPickDisplay, setCustomerPickDisplay] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [businessId, setBusinessId] = useState<string | null>(null);
+  const [saleTags, setSaleTags] = useState<SaleTag[]>([]);
+  const [defaultSaleTagId, setDefaultSaleTagId] = useState<string | null>(null);
+  const [saleTagId, setSaleTagId] = useState<string | null>(null);
   /** Avoid re-hydrating edit mode when `products` refetches after save. */
   const lastHydratedEditSaleIdRef = useRef<string | null>(null);
   const submitInFlightRef = useRef(false);
@@ -155,6 +166,38 @@ export function SalesForm({
     void loadProducts();
   }, [loadProducts]);
 
+  const loadSaleTagData = useCallback(async () => {
+    const supabase = getSupabaseClient();
+    const [{ data: tags, error: tErr }, { data: defId, error: dErr }] = await Promise.all([
+      fetchSaleTags(supabase),
+      fetchDefaultSaleTagId(supabase),
+    ]);
+    if (tErr) {
+      toast.error(tErr.message);
+      return;
+    }
+    if (dErr) {
+      toast.error(dErr.message);
+      return;
+    }
+    setSaleTags(tags ?? []);
+    setDefaultSaleTagId(defId);
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      const supabase = getSupabaseClient();
+      const { data, error: pErr } = await supabase.from('profiles').select('business_id').maybeSingle();
+      if (cancelled || pErr) return;
+      setBusinessId((data?.business_id as string | undefined) ?? null);
+      await loadSaleTagData();
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [loadSaleTagData]);
+
   useEffect(() => {
     let cancelled = false;
     const supabase = getSupabaseClient();
@@ -178,6 +221,20 @@ export function SalesForm({
       cancelled = true;
     };
   }, []);
+
+  /** New sale: default tag; edit: row tag. */
+  useEffect(() => {
+    if (editSale) {
+      const id = editSale.sale.sale_tag_id;
+      setSaleTagId(id && id.length > 0 ? id : null);
+      return;
+    }
+    const fallback =
+      defaultSaleTagId && saleTags.some((t) => t.id === defaultSaleTagId)
+        ? defaultSaleTagId
+        : saleTags[0]?.id ?? null;
+    setSaleTagId(fallback);
+  }, [editSale?.sale.id, defaultSaleTagId, saleTags, editSale]);
 
   const productIdsOnLines = useMemo(
     () => [...new Set(lines.map((l) => l.productId).filter((id): id is string => Boolean(id)))],
@@ -335,6 +392,10 @@ export function SalesForm({
       setError('Add at least one line with product, quantity, and sale price.');
       return;
     }
+    if (!saleTagId) {
+      setError('Select a tag for this sale.');
+      return;
+    }
     const payload = ready.map((l) => ({
       product_id: l.productId!,
       quantity: Number(l.quantity),
@@ -378,6 +439,7 @@ export function SalesForm({
         p_payment_mode: paymentMode,
         p_notes: notes.trim() === '' ? null : notes.trim(),
         p_lines: payload,
+        p_sale_tag_id: saleTagId,
       };
       const { data, error: rpcErr } = editSale
         ? await supabase.rpc('update_sale', { p_sale_id: editSale.sale.id, ...baseArgs })
@@ -461,6 +523,28 @@ export function SalesForm({
       <Card>
         <CardContent className="space-y-4 p-4">
           <div className="grid gap-3">
+            <SaleTagPicker
+              tags={saleTags}
+              value={saleTagId}
+              onChange={setSaleTagId}
+              defaultTagId={defaultSaleTagId}
+              showDefaultHint
+              disabled={saving || loadingProducts}
+              onCreateTag={async (label) => {
+                if (!businessId) {
+                  toast.error('No business context');
+                  return null;
+                }
+                const supabase = getSupabaseClient();
+                const { data: row, error: cErr } = await createSaleTag(supabase, businessId, label);
+                if (cErr) {
+                  toast.error(cErr.message);
+                  return null;
+                }
+                await loadSaleTagData();
+                return row?.id ?? null;
+              }}
+            />
             <div className="space-y-1">
               <Label>Sale type (optional)</Label>
               <div className="grid grid-cols-3 gap-2">

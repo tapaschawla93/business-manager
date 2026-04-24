@@ -16,6 +16,8 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 
 type Props = {
   rows: MonthlyPerformanceRow[];
+  /** Legend / tooltip label for the red bar (`dataKey` stays `expenses`). */
+  counterpartyBarName?: string;
 };
 
 function monthLabel(month: number, year: number): string {
@@ -23,7 +25,10 @@ function monthLabel(month: number, year: number): string {
   return d.toLocaleString('en-IN', { month: 'short' });
 }
 
-export function MonthlyPerformanceChart({ rows }: Props) {
+export function MonthlyPerformanceChart({
+  rows,
+  counterpartyBarName = 'Expenses',
+}: Props) {
   const chartRows = rows.map((r) => ({
     label: monthLabel(r.month, r.year),
     revenue: r.revenue,
@@ -46,7 +51,12 @@ export function MonthlyPerformanceChart({ rows }: Props) {
               <Tooltip formatter={(value) => formatInrDisplay(Number(value ?? 0))} />
               <Legend />
               <Bar dataKey="revenue" fill="#16a34a" radius={[4, 4, 0, 0]} />
-              <Bar dataKey="expenses" fill="#dc2626" radius={[4, 4, 0, 0]} />
+              <Bar
+                name={counterpartyBarName}
+                dataKey="expenses"
+                fill="#dc2626"
+                radius={[4, 4, 0, 0]}
+              />
               <Bar dataKey="profit" fill="#0d9488" radius={[4, 4, 0, 0]} />
             </BarChart>
           </ResponsiveContainer>

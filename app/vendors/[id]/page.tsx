@@ -91,7 +91,7 @@ export default function VendorDetailPage() {
       toast.error(error.message);
       return;
     }
-    toast.success('Vendor archived');
+    toast.success('Vendor deleted');
     router.replace('/vendors');
   }
 
@@ -150,7 +150,7 @@ export default function VendorDetailPage() {
             onClick={() => setArchiveOpen(true)}
           >
             <Trash2 className="h-4 w-4" />
-            Archive
+            Delete
           </Button>
         </div>
       </div>
@@ -236,9 +236,9 @@ export default function VendorDetailPage() {
       <Dialog open={archiveOpen} onOpenChange={setArchiveOpen}>
         <DialogContent className="sm:max-w-md">
           <DialogHeader>
-            <DialogTitle>Archive vendor</DialogTitle>
+            <DialogTitle>Delete vendor</DialogTitle>
             <DialogDescription>
-              Hides this vendor from the directory and picker. Linked expenses remain unchanged.
+              Permanently removes this vendor. Expenses keep their data; the vendor link is cleared.
             </DialogDescription>
           </DialogHeader>
           <div className="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
@@ -251,7 +251,7 @@ export default function VendorDetailPage() {
               disabled={archiving}
               onClick={() => void confirmArchive()}
             >
-              {archiving ? 'Archiving…' : 'Archive'}
+              {archiving ? 'Deleting…' : 'Delete'}
             </Button>
           </div>
         </DialogContent>

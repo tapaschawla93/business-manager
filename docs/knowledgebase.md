@@ -1,5 +1,23 @@
 # Module Learnings
 
+## Team invites + multi-member businesses
+
+- **Ownership model:** `businesses.owner_user_id` stores the creator. Only this user can invite, revoke invites, and remove members.
+- **Membership model:** `profiles.business_id` is no longer unique, so multiple accounts can belong to the same business.
+- **Invite flow:** Owner creates pending invite (`business_invitations`) by email (max 3 pending). On auth success, app first runs `accept_business_invitation_for_current_user`; only if no invite exists does normal `create_business_for_user` onboarding run.
+- **Removal behavior:** removing a member sets `profiles.deleted_at`; they immediately lose tenant access and will need normal onboarding for a new business if they sign in again.
+
+---
+
+## Sale tags (tenant dictionary)
+
+- **What**: **`sale_tags`** rows are per-**`business_id`** labels. **`sales.sale_tag_id`** and **`expenses.expense_tag_id`** point at the same table so revenue and spend share one tagging dimension.
+- **Default**: **`businesses.default_sale_tag_id`** pre-selects a tag in Sales/Expense forms when the user does not change it (column may be null until onboarding/migration sets it).
+- **Dashboard**: Home **Scope** passes **`p_sale_tag_id`** into **`get_dashboard_kpis`**, **`get_top_products`**, **`get_monthly_performance`**. **All tags** = **`null`** — KPI and monthly “expense” side uses **`expenses`** in the date range (no tag filter on expenses). **One tag** = sales filtered by **`sales.sale_tag_id`**; the same KPI / monthly fields still named **`total_expenses`** / **`expenses`** but aggregate **COGS** from **`sale_items`** (**`quantity × cost_price_snapshot`**) for those sales, split by **`sales.payment_mode`** for net cash / online. **Inventory value** stays **not** tag-filtered (full-tenant snapshot). Migration **`20260402140000_dashboard_tag_scope_product_cost.sql`**.
+- **RPCs**: **`save_sale` / `update_sale`** require **`p_sale_tag_id`** and validate it belongs to the tenant’s active tags.
+
+---
+
 ## Multi-tenancy, Auth & RLS (Supabase)
 
 ### Level 1 — Core idea
@@ -115,7 +133,7 @@
 ### Level 2 — How it works
 
 - **RETURNING + SELECT RLS**: If the app chains **`.select()`** after **`update({ deleted_at })`**, PostgREST asks Postgres to **return** the updated row. Returned rows must satisfy **SELECT** policies. Policies that require `deleted_at IS NULL` **hide** the archived row—empty body, confusing errors, or “new row violates RLS”-style messages depending on stack. **Fix:** archive via **`update` without `select`**, or use an RPC that doesn’t rely on returning the row to the client.
-- **`archive_product` / `archive_expense`**: **`SECURITY DEFINER`** functions read **`profiles.business_id`** for **`auth.uid()`** (active profile only), then **`UPDATE … WHERE id = … AND business_id = v_bid AND deleted_at IS NULL`**. Same **trust model** as **`save_sale`**: tenant boundary enforced inside the function, not by hoping client `UPDATE` survives every RLS edge case.
+- **`archive_product` / `archive_expense`**: **`SECURITY DEFINER`** functions read **`profiles.business_id`** for **`auth.uid()`** (active profile only), then hard-delete tenant rows by id (`DELETE … WHERE id = … AND business_id = v_bid AND deleted_at IS NULL`). `archive_expense` supports **optional** inventory reversal (`p_reverse_inventory=true`) for linked stock-purchase rows; default delete leaves stock unchanged. Same **trust model** as **`save_sale`**: tenant boundary enforced inside the function.
 - **Edge cases**: **`FOUND`** in PL/pgSQL reflects the **last** SQL statement—after `SELECT INTO` then `UPDATE`, test **`NOT FOUND`** only **after** the `UPDATE` if you need row-affected semantics.
 - **Debug**: In SQL editor, inspect `pg_policy` for both **`polqual` (USING)** and **`polwithcheck` (WITH CHECK)**; confirm migrations actually applied on the remote DB.
 
@@ -463,8 +481,9 @@
 
 ### Level 2 — How it works
 
-- **Identity strategy**: Aggregate sales by `customer_id` first, else by normalized `customer_phone`, else as sale-unique fallback (`sale:<id>`). This avoids incorrect merges.
-- **Important tradeoff**: We intentionally **do not merge by name**; same name does not imply same person.
+- **Identity strategy**: Aggregate sales by **`customer_id`**; else **digits-normalized phone** (merges +91 / spacing / leading 0 with saved **`customers`** phone); else shared **`ph:`** bucket for walk-ins with no saved customer; else **normalized name** (`nm:`) when phone is empty (can merge unrelated homonyms—tradeoff for repeat counts); else **`sale:<id>`**.
+- **Important tradeoff**: Name-only merge helps walk-ins who never enter phone; two different people with the same display name can be counted as one repeat.
+- **`fetchCustomersList`** pages through **all** **`sales`** (1000-row chunks) so PostgREST default caps do not under-count repeats.
 - **Directory completeness**: After sales aggregation, append persisted `customers` rows with zero orders so the directory is complete even without sales.
 - **Lifecycle controls**:
   - Rows with `customerId` support **Edit/Delete** (soft delete via `deleted_at`).
@@ -480,3 +499,53 @@
   - Strict canonical-only list (cleaner but hides legacy sales customers).
   - Full ETL backfill job to guarantee every sale has `customer_id` (best long-term, more migration complexity).
 - **Senior lens**: Treat identity resolution rules as a product contract. Version rule changes carefully because they affect KPIs, repeat-customer counts, and user trust.
+
+---
+
+## Dashboard home — scoped KPIs, layout stability, failed loads, client tests
+
+### Level 1 — Core idea
+
+- **What**: Home **`/`** loads **`get_dashboard_kpis`**, **`get_monthly_performance`**, **`get_top_products`** with **`p_sale_tag_id`** from **Scope**. **All tags** = ledger **expenses** in range for the “expense” side; **one tag** = **COGS** from **`sale_items`** for sales in that tag (`cost_price_snapshot × quantity`), with cash/online nets using **`sales.payment_mode`**. Same RPC column names (`total_expenses`, `expenses`); **meaning** depends on scope.
+- **Why layout/error notes matter**: In-flow “refreshing” copy between controls and KPIs **changes document height** and feels broken; failed refetches must not leave **old numbers** under a **new** tag/range without an aggressive correction (this app **clears** KPI/top/monthly state on error when the failed request is still current).
+- **When**: Any multi-request dashboard with **stale-while-revalidate** display and **scope** that changes RPC semantics.
+
+### Level 2 — Mechanics & pitfalls
+
+- **UI**: Prefer **`aria-live` (sr-only)** + **`aria-busy`** on the metrics region over extra visible rows that shift layout; relabel **Cash in Hand** hints/footers when scoped so users don’t read **net cash** as “minus expenses” instead of “minus COGS by payment mode.”
+- **Races**: A **generation ref** (or equivalent) should drop stale **`setState`** after fast successive scope/range changes.
+- **Tests**: **Vitest** + mocked **`supabase.rpc`** validates **RPC args** and **response parsing** in **`lib/queries/dashboard.ts`** without a live DB; **SQL branching** (COGS vs expenses) is still enforced by **migrations** and manual/integrated verification.
+
+### Level 3 — Production notes
+
+- **API shape tradeoff**: Reusing **`total_expenses`** for COGS minimizes client churn but requires **strict** UI/docs alignment; a future API might expose **`product_cost`** explicitly.
+- **Error UX**: Clearing data on failure is **honest**; alternatives include **retry** CTA or **“showing previous scope”** banners keyed off **`loadedForRange` + `loadedForTagId`**.
+- **Senior lens**: Treat **scope-dependent semantics** as part of the product contract—onboarding and support copy should match what Postgres returns, not what the field name suggests in English.
+
+---
+
+## Import, backup & restore — workbook round-trip, CSV menus, dedupe, and guardrails
+
+### Level 1 — Core concept
+
+- **What**: The **Dashboard** offers **Export backup** (`.xlsx`) and **Restore** (re-import that shape). **Per-module CSV** (⋮ **`ModuleCsvMenu`**) imports one entity type at a time with that module’s column contract.
+- **Why**: Full workbooks cover **ordered**, multi-table snapshots; CSV avoids forcing users through a monolithic file for a single list update.
+- **When**: Use **Restore** for broad merges / recovery (same `parseWorkbook` / `uploadWorkbook` pipeline); use **CSV** for targeted catalog or list loads.
+- **Fit**: `lib/excel/downloadBackupWorkbook.ts`, `parseWorkbook.ts`, `uploadWorkbook.ts`, `components/ModuleCsvMenu.tsx`, and each module page that wires the menu.
+
+### Level 2 — How it works
+
+- **Partial apply**: `uploadWorkbook` commits **sheet-by-sheet** in a fixed order. A failure on a later sheet does **not** roll back earlier sheets — users see **`WORKBOOK_UPLOAD_PARTIAL_APPLY_NOTE`** when row errors exist.
+- **Customer identity on import**: **`customerPhoneDedupeKey`** (in `lib/queries/customers.ts`) drives **`keyCustomers`** in `dedupeRules.ts` — **digit-normalized** match when possible (`normalizePhoneDigits`), else **trimmed raw** fallback so short/non-standard numbers still dedupe consistently. **Persisted `phone`** on insert is the **trimmed source** from the row (CSV or workbook), not an opaque internal key.
+- **Customer CSV performance**: Rows are collected into **`pending`** with the same duplicate rules as sequential insert, then **`insert(batch)`** (size 50). If the batch fails, that slice falls back to **row-by-row** so **`ImportIssue`** stays accurate.
+- **Workbook size cap**: **`parseWorkbook`** rejects files over **`MAX_WORKBOOK_BYTES`** (25 MB) **before** `readAsArrayBuffer` / `XLSX.read` to reduce browser freeze / OOM risk.
+- **Dashboard sale tags**: Failed **`fetchSaleTags`** triggers **`toast.error`** and clears tag options (`setDashboardTags([])`) so “empty scope” isn’t mistaken for “tenant has no tags.”
+- **Debug**: Restore → `uploadWorkbook` error list (sheet + row); oversize file → immediate rejection message; customer CSV → optional `customers_import_errors.csv`.
+
+### Level 3 — Deep dive
+
+- **Batch vs row-level errors**: PostgREST multi-row insert often returns **one** error for the whole batch — the batch-then-fallback pattern keeps **median** latency low while preserving **per-row** diagnostics when the batch is invalid.
+- **Security lens**: Size limits and parsing run **client-side**; they mitigate **accidental huge files**, not authenticated abuse. Tenant isolation still depends on **RLS** and session-bound Supabase clients.
+- **Scaling**: Very large CSVs may still need **staging tables**, `COPY`, or **Edge Functions**; workbook restore remains oriented to **operator-scale** files, not data-warehouse dumps.
+- **Contract drift**: Backup column sets must stay aligned with **`parseWorkbook` / `uploadWorkbook`** — treat changes like an **API version**: update generator, parser, and migrations/docs together.
+- **Senior lens**: **Import dedupe** is not the same as a **DB unique constraint**; aligning keys (normalized phone) reduces duplicates at the gate, but **long-term integrity** may still want explicit uniqueness rules where the product allows.

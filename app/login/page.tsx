@@ -3,6 +3,7 @@
 import { FormEvent, useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { ensureBusinessForCurrentUser, getSupabaseClient } from '@/lib/supabaseClient';
+import { acceptPendingBusinessInvitation } from '@/lib/queries/teamMembers';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -21,6 +22,15 @@ export default function LoginPage() {
   const [error, setError] = useState<string | null>(null);
   const [info, setInfo] = useState<string | null>(null);
 
+  async function finalizePostAuth(businessNameForNewAccount?: string): Promise<void> {
+    const supabase = getSupabaseClient();
+    const { data: invitedBusinessId, error: inviteErr } = await acceptPendingBusinessInvitation(supabase);
+    if (inviteErr) throw inviteErr;
+    if (invitedBusinessId) return;
+    const { error: onboardError } = await ensureBusinessForCurrentUser(businessNameForNewAccount);
+    if (onboardError) throw onboardError;
+  }
+
   useEffect(() => {
     const supabase = getSupabaseClient();
 
@@ -29,12 +39,13 @@ export default function LoginPage() {
       if (sessionError) return;
 
       if (data.session) {
-        const { error: onboardError } = await ensureBusinessForCurrentUser();
-        if (!onboardError) {
+        try {
+          await finalizePostAuth();
           router.replace('/');
           router.refresh();
-        } else {
-          setError(onboardError.message);
+        } catch (err: unknown) {
+          const message = err instanceof Error ? err.message : 'Failed to complete sign-in';
+          setError(message);
         }
       }
     }
@@ -45,12 +56,15 @@ export default function LoginPage() {
       data: { subscription },
     } = supabase.auth.onAuthStateChange(async (event, session) => {
       if ((event === 'SIGNED_IN' || event === 'TOKEN_REFRESHED') && session) {
-        const { error: onboardError } = await ensureBusinessForCurrentUser();
-        if (!onboardError) {
+        try {
+          await finalizePostAuth();
           router.replace('/');
           router.refresh();
-        } else if (event === 'SIGNED_IN') {
-          setError(onboardError.message);
+        } catch (err: unknown) {
+          if (event === 'SIGNED_IN') {
+            const message = err instanceof Error ? err.message : 'Failed to complete sign-in';
+            setError(message);
+          }
         }
       }
     });
@@ -75,9 +89,12 @@ export default function LoginPage() {
         });
         if (signInError) throw signInError;
       } else {
+        const emailRedirectTo =
+          typeof window !== 'undefined' ? `${window.location.origin}/login` : undefined;
         const { data: signUpData, error: signUpError } = await supabase.auth.signUp({
           email,
           password,
+          options: emailRedirectTo ? { emailRedirectTo } : undefined,
         });
         if (signUpError) throw signUpError;
         if (!signUpData.session) {
@@ -89,10 +106,7 @@ export default function LoginPage() {
         }
       }
 
-      const { error: onboardError } = await ensureBusinessForCurrentUser(
-        mode === 'sign-up' ? businessName || undefined : undefined,
-      );
-      if (onboardError) throw onboardError;
+      await finalizePostAuth(mode === 'sign-up' ? businessName || undefined : undefined);
 
       router.replace('/');
       router.refresh();

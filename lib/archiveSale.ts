@@ -2,9 +2,12 @@ import type { SupabaseClient } from '@supabase/supabase-js';
 import { isPostgrestMissingRpcError, saleRpcUserHint } from '@/lib/saleRpcUserHint';
 
 /**
- * Soft-archives a sale: prefers `archive_sale` RPC; if that RPC is missing from PostgREST, applies
- * the same inventory restores as the server (`inventory_apply_delta` per line) via
- * `inventory_apply_delta_for_tenant`, then sets `sales.deleted_at`. Not atomic across round trips.
+ * Permanently removes a sale via `archive_sale` RPC (restores stock, deletes `sale_items` + `sales`).
+ *
+ * **Production:** If the RPC is missing from PostgREST, returns an error — no client-side multi-step fallback
+ * (avoids inconsistent stock vs sale state when a mid-flight request fails).
+ *
+ * **Development:** Same missing-RPC detection may still run a best-effort fallback for local work without migrations.
  */
 export async function archiveSaleWithClientFallback(
   supabase: SupabaseClient,
@@ -17,6 +20,14 @@ export async function archiveSaleWithClientFallback(
     return { error: saleRpcUserHint(rpcErr.message, rpcErr.code), usedClientFallback: false };
   }
 
+  if (process.env.NODE_ENV === 'production') {
+    return {
+      error:
+        'Cannot remove sale: the database function archive_sale is not available. Apply the latest Supabase migrations, reload the API schema cache if needed, and try again.',
+      usedClientFallback: false,
+    };
+  }
+
   const { data: sale, error: saleErr } = await supabase
     .from('sales')
     .select('id')
@@ -25,7 +36,7 @@ export async function archiveSaleWithClientFallback(
     .maybeSingle();
 
   if (saleErr) return { error: saleErr.message, usedClientFallback: false };
-  if (!sale) return { error: 'Sale not found, already archived, or access denied.', usedClientFallback: false };
+  if (!sale) return { error: 'Sale not found, already removed, or access denied.', usedClientFallback: false };
 
   const { data: items, error: itemsErr } = await supabase
     .from('sale_items')
@@ -76,27 +87,25 @@ export async function archiveSaleWithClientFallback(
     }
   }
 
-  // Do not chain `.select()` on this update: RETURNING rows must pass SELECT RLS, and
-  // `sales_select_active` requires `deleted_at is null`, so returning an archived row fails
-  // ("new row violates row-level security policy for table sales"). See 20250329120000.
-  const { error: upErr } = await supabase
+  const { error: delLinesErr } = await supabase.from('sale_items').delete().eq('sale_id', opts.saleId);
+  if (delLinesErr) return { error: delLinesErr.message, usedClientFallback: false };
+
+  const { error: delSaleErr } = await supabase
     .from('sales')
-    .update({ deleted_at: new Date().toISOString() })
+    .delete()
     .eq('id', opts.saleId)
-    .eq('business_id', opts.businessId)
-    .is('deleted_at', null);
+    .eq('business_id', opts.businessId);
 
-  if (upErr) return { error: upErr.message, usedClientFallback: false };
+  if (delSaleErr) return { error: delSaleErr.message, usedClientFallback: false };
 
-  const { data: stillActive, error: verErr } = await supabase
+  const { data: stillThere, error: verErr } = await supabase
     .from('sales')
     .select('id')
     .eq('id', opts.saleId)
-    .is('deleted_at', null)
     .maybeSingle();
 
   if (verErr) return { error: verErr.message, usedClientFallback: false };
-  if (stillActive) return { error: 'Sale not found, already archived, or access denied.', usedClientFallback: false };
+  if (stillThere) return { error: 'Sale not found, already removed, or access denied.', usedClientFallback: false };
 
   return { error: null, usedClientFallback: true };
 }

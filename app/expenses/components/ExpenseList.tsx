@@ -30,7 +30,7 @@ export function ExpenseList({
   expenses: Expense[];
   loading: boolean;
   onEdit: (row: Expense) => void;
-  onArchive: (id: string) => void;
+  onArchive: (row: Expense) => void;
   onRefresh: () => void;
 }) {
   return (
@@ -124,7 +124,7 @@ export function ExpenseList({
                               size="icon"
                               className="h-9 w-9 text-muted-foreground hover:text-destructive"
                               aria-label="Archive"
-                              onClick={() => onArchive(row.id)}
+                              onClick={() => onArchive(row)}
                             >
                               <Trash2 className="h-4 w-4" />
                             </Button>

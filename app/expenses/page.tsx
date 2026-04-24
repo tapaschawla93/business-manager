@@ -25,7 +25,7 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog';
-import { Download, Plus, Upload } from 'lucide-react';
+import { Plus } from 'lucide-react';
 import { downloadCsv, rowsToCsv } from '@/lib/exportCsv';
 import {
   buildImportIssuesCsv,
@@ -40,6 +40,11 @@ import { PageHeader } from '@/components/PageHeader';
 import { PageLoadingSkeleton } from '@/components/layout/PageLoadingSkeleton';
 import { SessionRedirectNotice } from '@/components/SessionRedirectNotice';
 import { useBusinessSession } from '@/lib/auth/useBusinessSession';
+import { fetchDefaultSaleTagId } from '@/lib/queries/saleTags';
+import { ModuleCsvMenu } from '@/components/ModuleCsvMenu';
+import { devError } from '@/lib/devLog';
+import { Switch } from '@/components/ui/switch';
+import { Label } from '@/components/ui/label';
 
 export default function ExpensesPage() {
   const session = useBusinessSession({ onMissingBusiness: 'error' });
@@ -50,7 +55,8 @@ export default function ExpensesPage() {
   const [error, setError] = useState<string | null>(null);
   const [editing, setEditing] = useState<Expense | null>(null);
   const [dialogOpen, setDialogOpen] = useState(false);
-  const [archiveTargetId, setArchiveTargetId] = useState<string | null>(null);
+  const [archiveTarget, setArchiveTarget] = useState<Expense | null>(null);
+  const [reverseInventoryOnDelete, setReverseInventoryOnDelete] = useState(false);
   const [importing, setImporting] = useState(false);
 
   const loadExpenses = useCallback(async () => {
@@ -89,19 +95,22 @@ export default function ExpensesPage() {
     if (!open) setEditing(null);
   }
 
-  function requestArchive(id: string) {
-    setArchiveTargetId(id);
+  function requestArchive(row: Expense) {
+    setArchiveTarget(row);
+    setReverseInventoryOnDelete(false);
   }
 
   async function confirmArchive() {
-    const id = archiveTargetId;
+    const target = archiveTarget;
+    const id = target?.id ?? null;
     if (!businessId || !id) return;
-    setArchiveTargetId(null);
+    setArchiveTarget(null);
 
     const supabase = getSupabaseClient();
     setError(null);
     const { error: upErr } = await supabase.rpc('archive_expense', {
       p_expense_id: id,
+      p_reverse_inventory: reverseInventoryOnDelete,
     });
 
     if (upErr) {
@@ -109,7 +118,7 @@ export default function ExpensesPage() {
       toast.error(upErr.message);
       return;
     }
-    toast.success('Expense archived');
+    toast.success('Expense deleted');
     if (editing?.id === id) setEditing(null);
     await loadExpenses();
   }
@@ -125,6 +134,7 @@ export default function ExpensesPage() {
       'payment_mode',
       'notes',
       'category',
+      'expense_tag',
     ];
     const rows = [
       {
@@ -137,6 +147,7 @@ export default function ExpensesPage() {
         payment_mode: 'cash',
         notes: '',
         category: '',
+        expense_tag: 'General',
       },
     ];
     downloadCsv('template_expenses.csv', rowsToCsv(headers, rows));
@@ -145,10 +156,30 @@ export default function ExpensesPage() {
   async function importExpensesFile(file: File) {
     if (!businessId) return;
     setImporting(true);
+    try {
     const text = await file.text();
     const { rows } = parseCsv(text);
     const issues: ImportIssue[] = [];
     const valid: { rowNo: number; payload: Record<string, unknown> }[] = [];
+
+    const supabase = getSupabaseClient();
+    const [{ data: tagRows, error: tagErr }, { data: defaultTagId, error: defErr }] = await Promise.all([
+      supabase.from('sale_tags').select('id, label').is('deleted_at', null).order('label'),
+      fetchDefaultSaleTagId(supabase),
+    ]);
+    if (tagErr || defErr) {
+      toast.error(tagErr?.message ?? defErr?.message ?? 'Could not load tags');
+      return;
+    }
+    const tagList = (tagRows ?? []) as { id: string; label: string }[];
+    function resolveExpenseTag(raw: string): string | null {
+      const s = raw.trim();
+      if (!s) return defaultTagId ?? null;
+      if (tagList.some((t) => t.id === s)) return s;
+      const lower = s.toLowerCase();
+      const hit = tagList.find((t) => t.label.trim().toLowerCase() === lower);
+      return hit?.id ?? null;
+    }
 
     rows.forEach((r, idx) => {
       const rowNo = idx + 2;
@@ -160,6 +191,8 @@ export default function ExpensesPage() {
       const unitCost = getRequiredNumber(r, 'unit_cost');
       const mode = getString(r, 'payment_mode').toLowerCase();
       const totalRaw = getOptionalNumber(r, 'total_amount');
+      const expenseTagRaw = getString(r, 'expense_tag');
+      const expenseTagId = resolveExpenseTag(expenseTagRaw);
 
       if (!date) issues.push({ row: rowNo, field: 'date', message: 'invalid date (use YYYY-MM-DD or DD/MM/YYYY)' });
       if (!vendor) issues.push({ row: rowNo, field: 'vendor_name', message: 'required' });
@@ -167,12 +200,30 @@ export default function ExpensesPage() {
       if (qty === null || qty <= 0) issues.push({ row: rowNo, field: 'quantity', message: 'must be > 0' });
       if (unitCost === null || unitCost < 0) issues.push({ row: rowNo, field: 'unit_cost', message: 'must be >= 0' });
       if (mode !== 'cash' && mode !== 'online') issues.push({ row: rowNo, field: 'payment_mode', message: "must be 'cash' or 'online'" });
+      if (!expenseTagId) {
+        issues.push({
+          row: rowNo,
+          field: 'expense_tag',
+          message: 'unknown tag (label or uuid, or empty if business has default)',
+        });
+      }
 
-      if (date && vendor && item && qty !== null && qty > 0 && unitCost !== null && unitCost >= 0 && (mode === 'cash' || mode === 'online')) {
+      if (
+        date &&
+        vendor &&
+        item &&
+        qty !== null &&
+        qty > 0 &&
+        unitCost !== null &&
+        unitCost >= 0 &&
+        (mode === 'cash' || mode === 'online') &&
+        expenseTagId
+      ) {
         valid.push({
           rowNo,
           payload: {
             business_id: businessId,
+            expense_tag_id: expenseTagId,
             date,
             vendor_name: vendor,
             item_description: item,
@@ -191,7 +242,6 @@ export default function ExpensesPage() {
 
     let inserted = 0;
     if (valid.length > 0) {
-      const supabase = getSupabaseClient();
       for (const v of valid) {
         const { error: insErr } = await supabase.from('expenses').insert(v.payload);
         if (insErr) issues.push({ row: v.rowNo, field: 'row', message: insErr.message });
@@ -200,11 +250,16 @@ export default function ExpensesPage() {
       await loadExpenses();
     }
 
-    setImporting(false);
     if (issues.length > 0) {
       downloadCsv('expenses_import_errors.csv', buildImportIssuesCsv(issues));
     }
     toast.success(`Expenses import complete: ${inserted} inserted, ${issues.length} failed.`);
+    } catch (e) {
+      devError('expenses import', e);
+      toast.error(e instanceof Error ? e.message : 'Expenses import failed');
+    } finally {
+      setImporting(false);
+    }
   }
 
   if (session.kind === 'loading') {
@@ -242,6 +297,13 @@ export default function ExpensesPage() {
               <Plus className="h-4 w-4" aria-hidden />
               New expense
             </Button>
+            <ModuleCsvMenu
+              menuAriaLabel="Expenses CSV import"
+              busy={importing}
+              disabled={!businessId}
+              onDownloadTemplate={downloadExpensesTemplate}
+              onFileSelected={(f) => void importExpensesFile(f)}
+            />
           </>
         }
       />
@@ -280,21 +342,50 @@ export default function ExpensesPage() {
         </DialogContent>
       </Dialog>
 
-      <AlertDialog open={archiveTargetId !== null} onOpenChange={(o) => !o && setArchiveTargetId(null)}>
+      <AlertDialog
+        open={archiveTarget !== null}
+        onOpenChange={(o) => {
+          if (!o) {
+            setArchiveTarget(null);
+            setReverseInventoryOnDelete(false);
+          }
+        }}
+      >
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>Archive expense?</AlertDialogTitle>
+            <AlertDialogTitle>Delete expense?</AlertDialogTitle>
             <AlertDialogDescription>
-              It will be hidden from lists and exports. This cannot be undone from the app.
+              The expense row is permanently deleted. Deleting a stock purchase does not change current inventory stock.
+              If your physical stock differs, adjust inventory separately.
             </AlertDialogDescription>
           </AlertDialogHeader>
+          {archiveTarget?.update_inventory === true && archiveTarget.product_id ? (
+            <div className="rounded-lg border border-border/70 bg-muted/30 p-3">
+              <div className="flex items-center justify-between gap-3">
+                <div className="space-y-1">
+                  <Label htmlFor="reverse-inventory-on-delete" className="text-sm font-medium">
+                    Reverse inventory before delete
+                  </Label>
+                  <p className="text-xs text-muted-foreground">
+                    Turn on only if you want this delete to subtract purchased stock from inventory.
+                  </p>
+                </div>
+                <Switch
+                  id="reverse-inventory-on-delete"
+                  checked={reverseInventoryOnDelete}
+                  onCheckedChange={setReverseInventoryOnDelete}
+                  aria-label="Reverse inventory before deleting expense"
+                />
+              </div>
+            </div>
+          ) : null}
           <AlertDialogFooter>
             <AlertDialogCancel>Cancel</AlertDialogCancel>
             <AlertDialogAction
               className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
               onClick={() => void confirmArchive()}
             >
-              Archive
+              Delete
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
