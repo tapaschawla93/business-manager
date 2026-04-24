@@ -68,6 +68,26 @@ export async function getCurrentUserOnboardingGate(
 }
 
 /**
+ * True when Supabase Auth refused to send another OTP/magic link (strict limits on free/dev).
+ */
+export function isAuthEmailRateLimited(message: string): boolean {
+  const m = message.toLowerCase();
+  return m.includes('rate limit') || m.includes('over_email_send_rate') || m.includes('email rate');
+}
+
+/** User-facing copy for failed invite email send. */
+export function describeInviteEmailFailure(message: string): string {
+  if (isAuthEmailRateLimited(message)) {
+    return (
+      'Supabase limited how many sign-in emails can be sent right now (common on the free plan). ' +
+      'Wait a few minutes and tap Resend, or in Supabase: Authentication → Emails or use Custom SMTP. ' +
+      'The invitation is still saved — the member can be emailed again when the limit clears.'
+    );
+  }
+  return message;
+}
+
+/**
  * Sends a login/signup magic-link email to invited user after DB invite row is created.
  * This is client-triggered and keeps redirect pinned to current local or deployed origin.
  */

@@ -5,8 +5,10 @@ import { toast } from 'sonner';
 import { getSupabaseClient } from '@/lib/supabaseClient';
 import {
   createBusinessInvitation,
+  describeInviteEmailFailure,
   fetchPendingInvitations,
   fetchTeamMembers,
+  isAuthEmailRateLimited,
   removeBusinessMember,
   revokeBusinessInvitation,
   sendBusinessInviteEmail,
@@ -75,9 +77,14 @@ export function TeamMembersSettingsCard() {
       }
       const { error: mailErr } = await sendBusinessInviteEmail(supabase, email);
       if (mailErr) {
-        toast.error(`Invite row created, but email send failed: ${mailErr.message}`);
+        toast.success('Invitation saved. Email could not be sent yet.');
+        if (isAuthEmailRateLimited(mailErr.message)) {
+          toast.warning(describeInviteEmailFailure(mailErr.message), { duration: 12_000 });
+        } else {
+          toast.error(mailErr.message);
+        }
       } else {
-        toast.success('Invitation sent');
+        toast.success('Invitation email sent');
       }
       setInviteEmail('');
       await refresh();
@@ -97,6 +104,25 @@ export function TeamMembersSettingsCard() {
       }
       toast.success('Invitation revoked');
       await refresh();
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function handleResendInviteEmail(email: string) {
+    setBusy(true);
+    try {
+      const supabase = getSupabaseClient();
+      const { error: mailErr } = await sendBusinessInviteEmail(supabase, email);
+      if (mailErr) {
+        if (isAuthEmailRateLimited(mailErr.message)) {
+          toast.warning(describeInviteEmailFailure(mailErr.message), { duration: 12_000 });
+        } else {
+          toast.error(mailErr.message);
+        }
+        return;
+      }
+      toast.success('Email sent again');
     } finally {
       setBusy(false);
     }
@@ -125,6 +151,8 @@ export function TeamMembersSettingsCard() {
         <CardTitle className="text-lg">Team members</CardTitle>
         <CardDescription>
           Only the business creator can invite or remove members. Up to 3 pending email invitations are allowed.
+          If email sending hits a limit (common on the free Supabase plan), the invite is still saved—use
+          <span className="font-medium"> Resend</span> after a few minutes.
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-5">
@@ -201,15 +229,26 @@ export function TeamMembersSettingsCard() {
                       Expires {new Date(invite.expires_at).toLocaleString()}
                     </p>
                   </div>
-                  <Button
-                    type="button"
-                    size="sm"
-                    variant="outline"
-                    disabled={busy}
-                    onClick={() => void handleRevoke(invite.id)}
-                  >
-                    Revoke
-                  </Button>
+                  <div className="flex flex-wrap gap-2">
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="secondary"
+                      disabled={busy}
+                      onClick={() => void handleResendInviteEmail(invite.invited_email)}
+                    >
+                      Resend email
+                    </Button>
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="outline"
+                      disabled={busy}
+                      onClick={() => void handleRevoke(invite.id)}
+                    >
+                      Revoke
+                    </Button>
+                  </div>
                 </li>
               ))}
             </ul>
