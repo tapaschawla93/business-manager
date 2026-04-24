@@ -1,6 +1,6 @@
 'use client';
 
-import { FormEvent, useState, useEffect, useRef } from 'react';
+import { FormEvent, useState, useEffect, useRef, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
 import { ensureBusinessForCurrentUser, getSupabaseClient } from '@/lib/supabaseClient';
 import { acceptPendingBusinessInvitation, getCurrentUserOnboardingGate } from '@/lib/queries/teamMembers';
@@ -25,23 +25,24 @@ export default function LoginPage() {
   const [error, setError] = useState<string | null>(null);
   const [info, setInfo] = useState<string | null>(null);
 
-  async function finalizePostAuth(
-    businessNameForNewAccount?: string,
-  ): Promise<{ destination: 'home' | 'set-password' }> {
-    const supabase = getSupabaseClient();
-    const { data: gate, error: gateErr } = await getCurrentUserOnboardingGate(supabase);
-    if (gateErr) throw gateErr;
-    if (gate === 'revoked_member' || gate === 'revoked_invite' || gate === 'expired_invite') {
-      await supabase.auth.signOut({ scope: 'local' });
-      throw new Error('Your access was revoked or invite expired. Ask the business owner to send a new invitation.');
-    }
-    const { data: invitedBusinessId, error: inviteErr } = await acceptPendingBusinessInvitation(supabase);
-    if (inviteErr) throw inviteErr;
-    if (invitedBusinessId) return { destination: 'set-password' };
-    const { error: onboardError } = await ensureBusinessForCurrentUser(businessNameForNewAccount);
-    if (onboardError) throw onboardError;
-    return { destination: 'home' };
-  }
+  const finalizePostAuth = useCallback(
+    async (businessNameForNewAccount?: string): Promise<{ destination: 'home' | 'set-password' }> => {
+      const supabase = getSupabaseClient();
+      const { data: gate, error: gateErr } = await getCurrentUserOnboardingGate(supabase);
+      if (gateErr) throw gateErr;
+      if (gate === 'revoked_member' || gate === 'revoked_invite' || gate === 'expired_invite') {
+        await supabase.auth.signOut({ scope: 'local' });
+        throw new Error('Your access was revoked or invite expired. Ask the business owner to send a new invitation.');
+      }
+      const { data: invitedBusinessId, error: inviteErr } = await acceptPendingBusinessInvitation(supabase);
+      if (inviteErr) throw inviteErr;
+      if (invitedBusinessId) return { destination: 'set-password' };
+      const { error: onboardError } = await ensureBusinessForCurrentUser(businessNameForNewAccount);
+      if (onboardError) throw onboardError;
+      return { destination: 'home' };
+    },
+    [],
+  );
 
   useEffect(() => {
     const supabase = getSupabaseClient();
@@ -62,32 +63,31 @@ export default function LoginPage() {
       }
     }
 
-    bootstrapSession();
+    void bootstrapSession();
 
     const {
       data: { subscription },
     } = supabase.auth.onAuthStateChange(async (event, session) => {
-      if ((event === 'SIGNED_IN' || event === 'TOKEN_REFRESHED') && session) {
-        if (manualAuthFlowInProgress.current) {
-          return;
-        }
-        try {
-          const result = await finalizePostAuth();
-          router.replace(result.destination === 'set-password' ? '/set-password' : '/');
-          router.refresh();
-        } catch (err: unknown) {
-          if (event === 'SIGNED_IN') {
-            const message = err instanceof Error ? err.message : 'Failed to complete sign-in';
-            setError(message);
-          }
-        }
+      if (event !== 'SIGNED_IN' || !session) {
+        return;
+      }
+      if (manualAuthFlowInProgress.current) {
+        return;
+      }
+      try {
+        const result = await finalizePostAuth();
+        router.replace(result.destination === 'set-password' ? '/set-password' : '/');
+        router.refresh();
+      } catch (err: unknown) {
+        const message = err instanceof Error ? err.message : 'Failed to complete sign-in';
+        setError(message);
       }
     });
 
     return () => {
       subscription.unsubscribe();
     };
-  }, [router]);
+  }, [router, finalizePostAuth]);
 
   async function handleSubmit(event: FormEvent) {
     event.preventDefault();

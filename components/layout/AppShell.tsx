@@ -61,20 +61,7 @@ export function AppShell({ children }: { children: ReactNode }) {
   const [businessNameLoading, setBusinessNameLoading] = useState(true);
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
 
-  useEffect(() => {
-    const supabase = getSupabaseClient();
-    void supabase.auth.getSession().then(({ data: { session } }) => {
-      setEmail(session?.user?.email ?? null);
-    });
-    const {
-      data: { subscription },
-    } = supabase.auth.onAuthStateChange((_e, session) => {
-      setEmail(session?.user?.email ?? null);
-    });
-    return () => subscription.unsubscribe();
-  }, []);
-
-  /** Load sidebar title from `businesses.name` (single embed query + refetch on auth change). */
+  /** Single auth listener: keep email in sync; reload sidebar on sign-in/out/user updates, not on every token refresh. */
   useEffect(() => {
     const supabase = getSupabaseClient();
     let cancelled = false;
@@ -155,10 +142,19 @@ export function AppShell({ children }: { children: ReactNode }) {
       setBusinessNameLoading(false);
     }
 
-    void loadSidebarTitle();
+    void supabase.auth.getSession().then(({ data: { session } }) => {
+      setEmail(session?.user?.email ?? null);
+      void loadSidebarTitle();
+    });
+
     const {
       data: { subscription },
-    } = supabase.auth.onAuthStateChange(() => {
+    } = supabase.auth.onAuthStateChange((event, session) => {
+      setEmail(session?.user?.email ?? null);
+      if (event === 'TOKEN_REFRESHED') {
+        return;
+      }
+      if (cancelled) return;
       void loadSidebarTitle();
     });
     return () => {
