@@ -82,7 +82,7 @@ export function AppShell({ children }: { children: ReactNode }) {
       if (!user || cancelled) return;
       const { data: profile, error: profileError } = await supabase
         .from('profiles')
-        .select('business_id')
+        .select('business_id, password_setup_required')
         .eq('id', user.id)
         .maybeSingle();
       if (cancelled) return;
@@ -92,6 +92,11 @@ export function AppShell({ children }: { children: ReactNode }) {
         return;
       }
       const businessId = (profile?.business_id as string | undefined) ?? null;
+      const passwordSetupRequired = Boolean(profile?.password_setup_required);
+      if (passwordSetupRequired && pathname !== '/set-password') {
+        router.replace('/set-password');
+        return;
+      }
       if (!businessId) {
         setBusinessName(null);
         return;
@@ -114,7 +119,7 @@ export function AppShell({ children }: { children: ReactNode }) {
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [pathname, router]);
 
   async function handleSignOut() {
     setMobileNavOpen(false);

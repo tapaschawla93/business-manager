@@ -22,13 +22,16 @@ export default function LoginPage() {
   const [error, setError] = useState<string | null>(null);
   const [info, setInfo] = useState<string | null>(null);
 
-  async function finalizePostAuth(businessNameForNewAccount?: string): Promise<void> {
+  async function finalizePostAuth(
+    businessNameForNewAccount?: string,
+  ): Promise<{ destination: 'home' | 'set-password' }> {
     const supabase = getSupabaseClient();
     const { data: invitedBusinessId, error: inviteErr } = await acceptPendingBusinessInvitation(supabase);
     if (inviteErr) throw inviteErr;
-    if (invitedBusinessId) return;
+    if (invitedBusinessId) return { destination: 'set-password' };
     const { error: onboardError } = await ensureBusinessForCurrentUser(businessNameForNewAccount);
     if (onboardError) throw onboardError;
+    return { destination: 'home' };
   }
 
   useEffect(() => {
@@ -40,8 +43,8 @@ export default function LoginPage() {
 
       if (data.session) {
         try {
-          await finalizePostAuth();
-          router.replace('/');
+          const result = await finalizePostAuth();
+          router.replace(result.destination === 'set-password' ? '/set-password' : '/');
           router.refresh();
         } catch (err: unknown) {
           const message = err instanceof Error ? err.message : 'Failed to complete sign-in';
@@ -57,8 +60,8 @@ export default function LoginPage() {
     } = supabase.auth.onAuthStateChange(async (event, session) => {
       if ((event === 'SIGNED_IN' || event === 'TOKEN_REFRESHED') && session) {
         try {
-          await finalizePostAuth();
-          router.replace('/');
+          const result = await finalizePostAuth();
+          router.replace(result.destination === 'set-password' ? '/set-password' : '/');
           router.refresh();
         } catch (err: unknown) {
           if (event === 'SIGNED_IN') {
@@ -106,9 +109,8 @@ export default function LoginPage() {
         }
       }
 
-      await finalizePostAuth(mode === 'sign-up' ? businessName || undefined : undefined);
-
-      router.replace('/');
+      const result = await finalizePostAuth(mode === 'sign-up' ? businessName || undefined : undefined);
+      router.replace(result.destination === 'set-password' ? '/set-password' : '/');
       router.refresh();
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : 'Authentication failed';

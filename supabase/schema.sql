@@ -75,6 +75,7 @@ create table if not exists public.profiles (
   id uuid primary key references auth.users (id) on delete cascade,
   business_id uuid not null references public.businesses (id) on delete restrict,
   full_name text,
+  password_setup_required boolean not null default false,
   deleted_at timestamptz,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
@@ -446,11 +447,12 @@ begin
     raise exception 'This account already belongs to another business';
   end if;
 
-  insert into public.profiles (id, business_id)
-  values (auth.uid(), v_invite.business_id)
+  insert into public.profiles (id, business_id, password_setup_required)
+  values (auth.uid(), v_invite.business_id, true)
   on conflict (id) do update
     set business_id = excluded.business_id,
-        deleted_at = null;
+        deleted_at = null,
+        password_setup_required = true;
 
   update public.business_invitations
   set status = 'accepted',
@@ -505,9 +507,28 @@ begin
   values (auth.uid(), v_business_id)
   on conflict (id) do update
     set business_id = excluded.business_id,
-        deleted_at = null;
+        deleted_at = null,
+        password_setup_required = false;
 
   return v_business_id;
+end;
+$$;
+
+create or replace function public.mark_password_setup_complete()
+returns void
+language plpgsql
+security definer
+set search_path = public
+as $$
+begin
+  if auth.uid() is null then
+    raise exception 'Not authenticated';
+  end if;
+
+  update public.profiles
+  set password_setup_required = false
+  where id = auth.uid()
+    and deleted_at is null;
 end;
 $$;
 
@@ -518,6 +539,7 @@ revoke all on function public.list_business_pending_invitations() from public;
 revoke all on function public.revoke_business_invitation(uuid) from public;
 revoke all on function public.remove_business_member(uuid) from public;
 revoke all on function public.accept_business_invitation_for_current_user() from public;
+revoke all on function public.mark_password_setup_complete() from public;
 revoke all on function public.create_business_for_user(text) from public;
 
 grant execute on function public.is_current_user_business_owner(uuid) to authenticated;
@@ -527,6 +549,7 @@ grant execute on function public.list_business_pending_invitations() to authenti
 grant execute on function public.revoke_business_invitation(uuid) to authenticated;
 grant execute on function public.remove_business_member(uuid) to authenticated;
 grant execute on function public.accept_business_invitation_for_current_user() to authenticated;
+grant execute on function public.mark_password_setup_complete() to authenticated;
 grant execute on function public.create_business_for_user(text) to authenticated;
 
 -- -----------------------------------------------------------------------------

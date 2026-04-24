@@ -12,7 +12,7 @@ import { isSupabaseConfigured } from '@/lib/supabaseClient';
  */
 export function AppChrome({ children }: { children: ReactNode }) {
   const pathname = usePathname();
-  const isLogin = pathname === '/login';
+  const isAuthStandalone = pathname === '/login' || pathname === '/set-password';
 
   if (!isSupabaseConfigured()) {
     return (
@@ -25,7 +25,7 @@ export function AppChrome({ children }: { children: ReactNode }) {
 
   return (
     <>
-      {isLogin ? (
+      {isAuthStandalone ? (
         <div className="min-h-screen bg-background">{children}</div>
       ) : (
         <AppShell>{children}</AppShell>
