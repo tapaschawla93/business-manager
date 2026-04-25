@@ -32,7 +32,9 @@ export function keySales(r: Record<string, unknown>): string {
   const date = String(r.date ?? '').trim();
   const pid = String(r.product_id ?? '').trim();
   const pnm = normalizeProductNameKey(String(r.product_name ?? ''));
-  const lineKey = pid && !pid.startsWith('<') ? pid : pnm ? `n:${pnm}` : '';
+  const pvr = normalizeProductNameKey(String(r.variant ?? r.product_variant ?? ''));
+  const nameLine = pnm ? `n:${pnm}${pvr ? `::v:${pvr}` : ''}` : '';
+  const lineKey = pid && !pid.startsWith('<') ? pid : nameLine;
   const ph = normalizePhoneDigits(String(r.customer_phone ?? ''));
   if (date && lineKey) {
     return `gen:${date}|${ph ?? 'np'}|${lineKey}|${Number(r.quantity ?? 0)}|${Number(r.sale_price ?? 0)}`;

@@ -5,7 +5,7 @@ const IMPORT_HELP_AOA: string[][] = [
   ['Bulk import — how IDs work'],
   [''],
   ['First-time import (no backup):'],
-  ['Put Products above Sales in the same file. For each sale line, set product_name to match Products.name (or leave product_id empty and use product_name only). UUID product_id is optional — use it when restoring from a backup export.'],
+  ['Put Products above Sales in the same file. For each sale line, set product_name to match Products.name. If the same name has multiple variants, also set Sales.variant to match Products.variant. UUID product_id is optional — use it when restoring from a backup export.'],
   [''],
   ['Sales sheet — column id:'],
   ['Use any unique label you choose per row (e.g. IMPORT-001). It is only for deduping this upload, not the database primary key.'],

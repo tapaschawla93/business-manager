@@ -1,6 +1,6 @@
 /**
  * Bulk Sales rows can identify a line by `product_id` (UUID) or `product_name`
- * (must match an active product `name` for the tenant, case/space insensitive).
+ * (must match an active product for the tenant, case/space insensitive).
  */
 
 const UUID_RE =
@@ -11,9 +11,24 @@ export function normalizeProductNameKey(name: string): string {
   return name.trim().toLowerCase().replace(/\s+/g, ' ');
 }
 
+/** Trim, lowercase, collapse internal whitespace for variant disambiguation. */
+export function normalizeProductVariantKey(variant: string): string {
+  return variant.trim().toLowerCase().replace(/\s+/g, ' ');
+}
+
+/** Composite lookup key for `product_name` + `variant`. */
+export function saleProductLookupKey(name: string, variant: string): string {
+  return `${normalizeProductNameKey(name)}::${normalizeProductVariantKey(variant)}`;
+}
+
 export type ResolveSaleProductResult =
   | { ok: true; productId: string }
   | { ok: false; message: string };
+
+export type SaleProductResolutionContext = {
+  productIdByNameVariant: Map<string, string>;
+  uniqueProductIdByName: Map<string, string>;
+};
 
 /**
  * Prefer a valid `product_id` UUID when present (backup round-trips).
@@ -21,10 +36,11 @@ export type ResolveSaleProductResult =
  */
 export function resolveSaleProductId(
   row: Record<string, unknown>,
-  productIdByNormalizedName: Map<string, string>,
+  context: SaleProductResolutionContext,
 ): ResolveSaleProductResult {
   const pidRaw = String(row.product_id ?? '').trim();
   const nameRaw = String(row.product_name ?? '').trim();
+  const variantRaw = String(row.variant ?? row.product_variant ?? '').trim();
 
   if (pidRaw && !pidRaw.startsWith('<')) {
     if (UUID_RE.test(pidRaw)) {
@@ -32,13 +48,24 @@ export function resolveSaleProductId(
     }
   }
 
-  if (nameRaw) {
-    const k = normalizeProductNameKey(nameRaw);
-    const id = productIdByNormalizedName.get(k);
+  if (nameRaw && variantRaw) {
+    const composite = saleProductLookupKey(nameRaw, variantRaw);
+    const id = context.productIdByNameVariant.get(composite);
     if (id) return { ok: true, productId: id };
     return {
       ok: false,
-      message: `Unknown product_name "${nameRaw}" — add it on the Products sheet (same file, above Sales) or use a valid product_id UUID.`,
+      message: `Unknown product_name + variant combination "${nameRaw}" + "${variantRaw}" — add matching values on the Products sheet or use product_id UUID.`,
+    };
+  }
+
+  if (nameRaw) {
+    const k = normalizeProductNameKey(nameRaw);
+    const id = context.uniqueProductIdByName.get(k);
+    if (id) return { ok: true, productId: id };
+    return {
+      ok: false,
+      message:
+        `Product "${nameRaw}" is missing or ambiguous across variants. Set the Sales sheet variant column, or use product_id UUID.`,
     };
   }
 

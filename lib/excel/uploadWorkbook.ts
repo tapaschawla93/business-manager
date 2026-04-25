@@ -1,7 +1,7 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import type { ParsedWorkbook } from './parseWorkbook';
 import { keyCustomers, keyExpenses, keyInventory, keyProducts, keySales, keyVendors } from './dedupeRules';
-import { normalizeProductNameKey, resolveSaleProductId } from './resolveSaleProductId';
+import { normalizeProductNameKey, normalizeProductVariantKey, resolveSaleProductId, saleProductLookupKey } from './resolveSaleProductId';
 
 export type UploadSummary = {
   added: number;
@@ -70,11 +70,29 @@ export async function uploadWorkbook(
 
   const productRows = (existingProducts.data ?? []) as { id: string; name: string; category: string; variant: string | null }[];
   const productKeys = new Set(productRows.map((p) => keyProducts(p)));
-  /** Resolve sale lines by name (case/space insensitive) — seeded from DB, then new inserts in this file. */
-  const productIdByNormalizedName = new Map<string, string>();
+  /** Resolve sale lines by name+variant (preferred) and unique name fallback. */
+  const productIdByNameVariant = new Map<string, string>();
+  const nameToProductIds = new Map<string, Set<string>>();
+
+  const registerProductLookup = (name: string, variant: string, id: string): void => {
+    const nameKey = normalizeProductNameKey(name);
+    const variantKey = normalizeProductVariantKey(variant);
+    if (!nameKey) return;
+    productIdByNameVariant.set(saleProductLookupKey(name, variantKey), id);
+    const byName = nameToProductIds.get(nameKey) ?? new Set<string>();
+    byName.add(id);
+    nameToProductIds.set(nameKey, byName);
+  };
+
   for (const p of productRows) {
-    const k = normalizeProductNameKey(String(p.name ?? ''));
-    if (k) productIdByNormalizedName.set(k, p.id);
+    registerProductLookup(String(p.name ?? ''), String(p.variant ?? ''), p.id);
+  }
+  const uniqueProductIdByName = new Map<string, string>();
+  for (const [nameKey, ids] of nameToProductIds.entries()) {
+    if (ids.size === 1) {
+      const [single] = Array.from(ids);
+      if (single) uniqueProductIdByName.set(nameKey, single);
+    }
   }
   const inventoryKeys = new Set(((existingInventory.data ?? []) as Record<string, unknown>[]).map(keyInventory));
   const customerKeys = new Set(
@@ -110,8 +128,17 @@ export async function uploadWorkbook(
     if (error) summary.errors.push({ sheet: 'Products', row: i + 2, reason: error.message });
     else if (insertedProduct?.id) {
       productKeys.add(key);
+      registerProductLookup(nameTrim, String(row.variant ?? '').trim(), insertedProduct.id);
       const nk = normalizeProductNameKey(nameTrim);
-      if (nk) productIdByNormalizedName.set(nk, insertedProduct.id);
+      if (nk) {
+        const ids = nameToProductIds.get(nk) ?? new Set<string>();
+        if (ids.size === 1) {
+          const [single] = Array.from(ids);
+          if (single) uniqueProductIdByName.set(nk, single);
+        } else {
+          uniqueProductIdByName.delete(nk);
+        }
+      }
       summary.added += 1;
     }
   }
@@ -193,7 +220,7 @@ export async function uploadWorkbook(
       summary.skipped += 1;
       continue;
     }
-    const resolved = resolveSaleProductId(row, productIdByNormalizedName);
+    const resolved = resolveSaleProductId(row, { productIdByNameVariant, uniqueProductIdByName });
     if (!resolved.ok) {
       summary.errors.push({ sheet: 'Sales', row: i + 2, reason: resolved.message });
       continue;
