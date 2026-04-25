@@ -549,6 +549,7 @@
 - **Customer identity on import**: **`customerPhoneDedupeKey`** (in `lib/queries/customers.ts`) drives **`keyCustomers`** in `dedupeRules.ts` — **digit-normalized** match when possible (`normalizePhoneDigits`), else **trimmed raw** fallback so short/non-standard numbers still dedupe consistently. **Persisted `phone`** on insert is the **trimmed source** from the row (CSV or workbook), not an opaque internal key.
 - **Customer CSV performance**: Rows are collected into **`pending`** with the same duplicate rules as sequential insert, then **`insert(batch)`** (size 50). If the batch fails, that slice falls back to **row-by-row** so **`ImportIssue`** stays accurate.
 - **Workbook size cap**: **`parseWorkbook`** rejects files over **`MAX_WORKBOOK_BYTES`** (25 MB) **before** `readAsArrayBuffer` / `XLSX.read` to reduce browser freeze / OOM risk.
+- **Sales row product resolution**: Restore/Sales bulk now supports a **`variant`** column on the Sales sheet. Resolver priority is: **`product_id` UUID** → **`product_name + variant`** → **`product_name` only when unique**. If a name maps to multiple variants and `variant` is missing, import returns a row error asking for `variant` (or UUID).
 - **Dashboard sale tags**: Failed **`fetchSaleTags`** triggers **`toast.error`** and clears tag options (`setDashboardTags([])`) so “empty scope” isn’t mistaken for “tenant has no tags.”
 - **Debug**: Restore → `uploadWorkbook` error list (sheet + row); oversize file → immediate rejection message; customer CSV → optional `customers_import_errors.csv`.
 
