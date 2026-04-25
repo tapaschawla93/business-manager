@@ -9,6 +9,16 @@
 
 ---
 
+## Manual signup approval (new business accounts)
+
+- **Request creation:** signup form submits to `create_signup_request(email, business_name, password)`. The password is hashed in Postgres and a `signup_requests` row is created with 48-hour expiry.
+- **Idempotency:** if the same email already has a pending request, the same request id is returned instead of creating duplicates.
+- **Approval / rejection:** run `manual_approve_signup_request(request_id)` or `manual_reject_signup_request(request_id)` from Supabase SQL editor. These RPCs are intentionally not executable by app roles (`anon` / `authenticated`).
+- **Approval result:** approval creates `auth.users`, `auth.identities`, `businesses`, default `sale_tags` row (`General`), and `profiles`, then marks the request as approved.
+- **Rejection / expiry behavior:** rejected requests are removed; expired pending requests are cleaned during subsequent request/approval attempts. Rejected users must re-register.
+
+---
+
 ## Sale tags (tenant dictionary)
 
 - **What**: **`sale_tags`** rows are per-**`business_id`** labels. **`sales.sale_tag_id`** and **`expenses.expense_tag_id`** point at the same table so revenue and spend share one tagging dimension.

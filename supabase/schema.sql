@@ -91,6 +91,282 @@ for each row
 execute function public.set_current_timestamp_updated_at();
 
 -- -----------------------------------------------------------------------------
+-- 2c) Pending signup requests (admin approval before account creation)
+-- -----------------------------------------------------------------------------
+create table if not exists public.signup_requests (
+  id uuid primary key default gen_random_uuid(),
+  email text not null,
+  email_norm text not null,
+  business_name text not null,
+  password_ciphertext text not null,
+  status text not null default 'pending' check (status in ('pending', 'approved', 'rejected', 'expired')),
+  approval_token text not null unique,
+  decided_by text,
+  decision_note text,
+  approved_auth_user_id uuid references auth.users (id) on delete set null,
+  expires_at timestamptz not null default (now() + interval '48 hours'),
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
+create unique index if not exists signup_requests_pending_email_uidx
+  on public.signup_requests (email_norm)
+  where status = 'pending';
+
+create index if not exists signup_requests_status_idx
+  on public.signup_requests (status, expires_at, created_at);
+
+drop trigger if exists set_signup_requests_updated_at on public.signup_requests;
+create trigger set_signup_requests_updated_at
+before update on public.signup_requests
+for each row
+execute function public.set_current_timestamp_updated_at();
+
+alter table public.signup_requests enable row level security;
+revoke all on table public.signup_requests from public;
+
+create or replace function public.create_signup_request(
+  p_email text,
+  p_business_name text,
+  p_password text
+)
+returns uuid
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_email text;
+  v_email_norm text;
+  v_business_name text;
+  v_existing uuid;
+  v_id uuid;
+begin
+  v_email := coalesce(trim(p_email), '');
+  v_business_name := coalesce(trim(p_business_name), '');
+  if v_email = '' or position('@' in v_email) <= 1 then
+    raise exception 'Valid email is required';
+  end if;
+  if v_business_name = '' then
+    raise exception 'Business name is required';
+  end if;
+  if coalesce(trim(p_password), '') = '' then
+    raise exception 'Password is required';
+  end if;
+  if length(p_password) < 8 then
+    raise exception 'Password must be at least 8 characters';
+  end if;
+  v_email_norm := lower(v_email);
+
+  if exists (select 1 from auth.users u where lower(u.email) = v_email_norm) then
+    raise exception 'An account with this email already exists';
+  end if;
+
+  delete from public.signup_requests
+  where email_norm = v_email_norm
+    and status in ('expired', 'rejected');
+
+  update public.signup_requests
+  set status = 'expired'
+  where email_norm = v_email_norm
+    and status = 'pending'
+    and expires_at <= now();
+
+  select id into v_existing
+  from public.signup_requests
+  where email_norm = v_email_norm
+    and status = 'pending'
+  order by created_at desc
+  limit 1;
+
+  if v_existing is not null then
+    return v_existing;
+  end if;
+
+  insert into public.signup_requests (
+    email,
+    email_norm,
+    business_name,
+    password_ciphertext,
+    approval_token
+  ) values (
+    v_email_norm,
+    v_email_norm,
+    v_business_name,
+    extensions.crypt(p_password, extensions.gen_salt('bf')),
+    replace(gen_random_uuid()::text, '-', '') || replace(gen_random_uuid()::text, '-', '')
+  )
+  returning id into v_id;
+
+  return v_id;
+end;
+$$;
+
+create or replace function public.manual_approve_signup_request(
+  p_request_id uuid,
+  p_decided_by text default 'administrator'
+)
+returns uuid
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_req record;
+  v_business_id uuid;
+  v_tag_id uuid;
+  v_auth_user_id uuid;
+  v_instance_id uuid;
+begin
+  select *
+    into v_req
+  from public.signup_requests
+  where id = p_request_id
+  limit 1;
+
+  if v_req.id is null then
+    raise exception 'Signup request not found';
+  end if;
+  if v_req.status <> 'pending' then
+    raise exception 'Signup request is not pending';
+  end if;
+  if v_req.expires_at <= now() then
+    delete from public.signup_requests where id = p_request_id;
+    raise exception 'Signup request expired';
+  end if;
+  if exists (select 1 from auth.users u where lower(u.email) = lower(v_req.email_norm)) then
+    raise exception 'Auth user with this email already exists';
+  end if;
+
+  select i.id into v_instance_id
+  from auth.instances i
+  limit 1;
+  if v_instance_id is null then
+    v_instance_id := '00000000-0000-0000-0000-000000000000'::uuid;
+  end if;
+
+  insert into auth.users (
+    id,
+    instance_id,
+    aud,
+    role,
+    email,
+    encrypted_password,
+    email_confirmed_at,
+    confirmation_token,
+    recovery_token,
+    email_change_token_new,
+    email_change_token_current,
+    email_change,
+    raw_app_meta_data,
+    raw_user_meta_data,
+    is_sso_user,
+    is_anonymous,
+    created_at,
+    updated_at
+  )
+  values (
+    gen_random_uuid(),
+    v_instance_id,
+    'authenticated',
+    'authenticated',
+    v_req.email_norm,
+    v_req.password_ciphertext,
+    now(),
+    '',
+    '',
+    '',
+    '',
+    '',
+    '{"provider":"email","providers":["email"]}'::jsonb,
+    '{}'::jsonb,
+    false,
+    false,
+    now(),
+    now()
+  )
+  returning id into v_auth_user_id;
+
+  insert into auth.identities (
+    id,
+    provider_id,
+    user_id,
+    identity_data,
+    provider,
+    last_sign_in_at,
+    created_at,
+    updated_at
+  )
+  values (
+    gen_random_uuid(),
+    v_auth_user_id::text,
+    v_auth_user_id,
+    jsonb_build_object(
+      'sub', v_auth_user_id::text,
+      'email', v_req.email_norm,
+      'email_verified', true,
+      'phone_verified', false
+    ),
+    'email',
+    now(),
+    now(),
+    now()
+  );
+
+  insert into public.businesses (name, owner_user_id)
+  values (v_req.business_name, v_auth_user_id)
+  returning id into v_business_id;
+
+  insert into public.sale_tags (business_id, label)
+  values (v_business_id, 'General')
+  returning id into v_tag_id;
+
+  update public.businesses
+  set default_sale_tag_id = v_tag_id
+  where id = v_business_id;
+
+  insert into public.profiles (id, business_id, password_setup_required, deleted_at)
+  values (v_auth_user_id, v_business_id, false, null)
+  on conflict (id) do update
+    set business_id = excluded.business_id,
+        password_setup_required = false,
+        deleted_at = null;
+
+  update public.signup_requests
+  set status = 'approved',
+      decided_by = coalesce(nullif(trim(p_decided_by), ''), 'administrator'),
+      approved_auth_user_id = v_auth_user_id
+  where id = p_request_id;
+
+  return v_business_id;
+end;
+$$;
+
+create or replace function public.manual_reject_signup_request(
+  p_request_id uuid,
+  p_decided_by text default 'administrator',
+  p_decision_note text default null
+)
+returns void
+language plpgsql
+security definer
+set search_path = public
+as $$
+begin
+  delete from public.signup_requests
+  where id = p_request_id;
+end;
+$$;
+
+revoke all on function public.create_signup_request(text, text, text) from public;
+revoke all on function public.manual_approve_signup_request(uuid, text) from public;
+revoke all on function public.manual_reject_signup_request(uuid, text, text) from public;
+revoke all on function public.manual_approve_signup_request(uuid, text) from anon, authenticated;
+revoke all on function public.manual_reject_signup_request(uuid, text, text) from anon, authenticated;
+
+grant execute on function public.create_signup_request(text, text, text) to anon, authenticated;
+
+-- -----------------------------------------------------------------------------
 -- 2b) Team invitations
 -- -----------------------------------------------------------------------------
 create table if not exists public.business_invitations (
@@ -211,6 +487,7 @@ declare
   v_email text;
   v_email_norm text;
   v_pending_count integer;
+  v_existing record;
 begin
   if auth.uid() is null then
     raise exception 'Not authenticated';
@@ -239,16 +516,6 @@ begin
     and bi.status = 'pending'
     and bi.expires_at <= now();
 
-  select count(*)
-    into v_pending_count
-  from public.business_invitations bi
-  where bi.business_id = v_business_id
-    and bi.status = 'pending'
-    and bi.expires_at > now();
-  if v_pending_count >= 3 then
-    raise exception 'Maximum of 3 pending invites reached';
-  end if;
-
   if exists (
     select 1
     from public.profiles p
@@ -260,10 +527,54 @@ begin
     raise exception 'This email already belongs to a member in your business';
   end if;
 
-  insert into public.business_invitations (business_id, invited_email, invited_email_norm, invited_by)
-  values (v_business_id, v_email, v_email_norm, auth.uid())
-  returning business_invitations.id, business_invitations.invited_email, business_invitations.expires_at
-  into id, invited_email, expires_at;
+  -- Idempotent behavior: if a pending invite already exists, return it.
+  select bi.id, bi.invited_email, bi.expires_at
+    into v_existing
+  from public.business_invitations bi
+  where bi.business_id = v_business_id
+    and bi.invited_email_norm = v_email_norm
+    and bi.status = 'pending'
+  order by bi.created_at desc
+  limit 1;
+
+  if v_existing.id is not null then
+    id := v_existing.id;
+    invited_email := v_existing.invited_email;
+    expires_at := v_existing.expires_at;
+    return next;
+    return;
+  end if;
+
+  select count(*)
+    into v_pending_count
+  from public.business_invitations bi
+  where bi.business_id = v_business_id
+    and bi.status = 'pending'
+    and bi.expires_at > now();
+  if v_pending_count >= 3 then
+    raise exception 'Maximum of 3 pending invites reached';
+  end if;
+
+  begin
+    insert into public.business_invitations (business_id, invited_email, invited_email_norm, invited_by)
+    values (v_business_id, v_email, v_email_norm, auth.uid())
+    returning business_invitations.id, business_invitations.invited_email, business_invitations.expires_at
+    into id, invited_email, expires_at;
+  exception
+    when unique_violation then
+      -- Concurrent duplicate invite attempt: return the existing pending row.
+      select bi.id, bi.invited_email, bi.expires_at
+        into id, invited_email, expires_at
+      from public.business_invitations bi
+      where bi.business_id = v_business_id
+        and bi.invited_email_norm = v_email_norm
+        and bi.status = 'pending'
+      order by bi.created_at desc
+      limit 1;
+      if id is null then
+        raise;
+      end if;
+  end;
 
   return next;
 end;

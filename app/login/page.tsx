@@ -9,7 +9,6 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { TrendingUp } from 'lucide-react';
-import { toast } from 'sonner';
 
 type Mode = 'sign-in' | 'sign-up';
 
@@ -105,41 +104,31 @@ export default function LoginPage() {
         });
         if (signInError) throw signInError;
       } else {
-        const emailRedirectTo =
-          typeof window !== 'undefined' ? `${window.location.origin}/login` : undefined;
-        const { data: signUpData, error: signUpError } = await supabase.auth.signUp({
-          email,
-          password,
-          options: emailRedirectTo ? { emailRedirectTo } : undefined,
+        const res = await fetch('/api/signup-requests', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            email,
+            password,
+            businessName: businessName.trim(),
+          }),
         });
-        if (signUpError) throw signUpError;
-        if (!signUpData.session) {
-          setInfo(
-            'If your project requires email confirmation, open the link in your email, then sign in. Your business is created on first successful sign-in.',
-          );
-          setLoading(false);
-          manualAuthFlowInProgress.current = false;
-          return;
+        const payload = (await res.json()) as { error?: string };
+        if (!res.ok) {
+          throw new Error(payload.error ?? 'Could not submit signup request');
         }
+        setInfo(
+          'Your request has been sent to the administrator for authentication. Please wait 24 to 48 hours. You can sign in only after approval.',
+        );
+        setMode('sign-in');
+        setPassword('');
+        setBusinessName('');
+        setLoading(false);
+        manualAuthFlowInProgress.current = false;
+        return;
       }
 
-      const nameForOnboarding = mode === 'sign-up' ? businessName.trim() || undefined : undefined;
-      const result = await finalizePostAuth(nameForOnboarding);
-      if (mode === 'sign-up' && nameForOnboarding) {
-        const { data: u } = await supabase.auth.getUser();
-        if (u.user) {
-          const { data: prof } = await supabase.from('profiles').select('business_id').eq('id', u.user.id).maybeSingle();
-          const bid = prof?.business_id as string | undefined;
-          if (bid) {
-            const { error: nameErr } = await supabase.from('businesses').update({ name: nameForOnboarding }).eq('id', bid);
-            if (nameErr) {
-              toast.error(`Could not save business name: ${nameErr.message}`);
-            } else if (typeof window !== 'undefined') {
-              window.dispatchEvent(new CustomEvent('bizmanager:business-name-updated', { detail: nameForOnboarding }));
-            }
-          }
-        }
-      }
+      const result = await finalizePostAuth();
       router.replace(result.destination === 'set-password' ? '/set-password' : '/');
       router.refresh();
     } catch (err: unknown) {
@@ -176,7 +165,7 @@ export default function LoginPage() {
             <CardDescription className="text-base leading-relaxed">
               {mode === 'sign-in'
                 ? 'Sign in with email and password to open your dashboard.'
-                : 'Email and password. A business row is created on first sign-in.'}
+                : 'Submit your details for admin approval. Account is created only after approval.'}
             </CardDescription>
           </CardHeader>
           <CardContent>
@@ -184,7 +173,7 @@ export default function LoginPage() {
               {mode === 'sign-up' && (
                 <div className="space-y-2">
                   <Label htmlFor="business" className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-                    Business name (optional)
+                    Business name
                   </Label>
                   <Input
                     id="business"
@@ -192,8 +181,9 @@ export default function LoginPage() {
                     autoComplete="organization"
                     value={businessName}
                     onChange={(e) => setBusinessName(e.target.value)}
-                    placeholder="My Business"
+                    placeholder="Your business name"
                     className="rounded-xl"
+                    required
                   />
                 </div>
               )}

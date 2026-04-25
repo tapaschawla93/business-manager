@@ -6,6 +6,7 @@ All notable changes to this project are documented here. Format loosely follows 
 
 ### Added
 
+- **Admin approval for new business signups:** Sign-up now creates a pending `signup_requests` row and emails the administrator with one-click **Approve** / **Reject** links. Requests expire after 48 hours; rejected/expired requests must be re-submitted. Team-member invite flow remains direct-to-member.
 - **Team invitations + members:** Owner-only email invite flow with max **3 pending invites** (`business_invitations` + RPCs `create_business_invitation`, `list_business_pending_invitations`, `list_business_members`, `revoke_business_invitation`, `remove_business_member`, `accept_business_invitation_for_current_user`). Settings now includes a Team Members card to invite/revoke/remove.
 - **Help (`/help`):** Static import/backup guide — workbook sheet order for **Restore**, links to modules for per-sheet CSV, backup vs CSV scope. Shell nav **Help** (`lib/nav.ts`).
 - **`ModuleCsvMenu`:** ⋮ **Download CSV template** + **Upload CSV** on **Products**, **Sales**, **Expenses**, **Inventory**, **Vendors**, **Customers** (`components/ModuleCsvMenu.tsx`).
@@ -25,6 +26,10 @@ All notable changes to this project are documented here. Format loosely follows 
 
 ### Fixed
 
+- **Signup request API error mapping:** `/api/signup-requests` now maps known validation/conflict DB errors to clearer HTTP statuses (400/409) instead of always returning 500.
+- **Manual signup approval hardening:** `manual_approve_signup_request` and `manual_reject_signup_request` execute privileges are revoked from `anon`/`authenticated`; approval/rejection is SQL-admin only.
+- **Migration/documentation drift:** Added canonical hardening migration `20260425234500_harden_manual_signup_approval_access.sql` and documented the final manual approval flow in `docs/knowledgebase.md`.
+- **Team invites:** Re-inviting the same email while an invite is already pending is now idempotent (returns the existing pending invite) instead of failing with `business_invitations_pending_email_uidx` duplicate-key errors. Concurrent duplicate invite attempts are handled the same way.
 - **Dashboard Scope:** Failed **`fetchSaleTags`** now **`toast.error`** + **`setDashboardTags([])`** instead of failing silently.
 - **`expenses_validate_refs`:** On **UPDATE**, **product_id** / **vendor_id** are only checked when those columns **change**, so backfills (e.g. **`expense_tag_id`**) and other edits do not fail when **`product_id`** still points at an **archived** product. Applied at the start of **`20260402120000_sale_tags_dashboard_filter.sql`** and again idempotently in **`20260402130000_expenses_validate_refs_unchanged_skip.sql`** for DBs that already ran an older **`02120000`**. **`supabase/schema.sql`** aligned for greenfield.
 - **Sales — component shortfall hint:** **`fetchComponentShortfallsForLines`** now **sums demand per `inventory_item_id`** across all lines (same product twice or shared components) before comparing to **`current_stock`**.
