@@ -137,6 +137,7 @@ export default function SalesPage() {
       'notes',
       'tag',
       'product_lookup',
+      'variant',
       'quantity',
       'sale_price',
     ];
@@ -152,6 +153,7 @@ export default function SalesPage() {
         notes: '',
         tag: 'General',
         product_lookup: 'Sample Product A',
+        variant: '',
         quantity: '2',
         sale_price: '1500',
       },
@@ -220,8 +222,11 @@ export default function SalesPage() {
       const tagRaw = getString(r, 'tag');
       const resolvedTagId = resolveImportTag(tagRaw);
       const lookupStr = getString(r, 'product_lookup');
+      const variantStr = getString(r, 'variant');
+      const lookupWithVariant =
+        lookupStr && variantStr && !lookupStr.includes('::') ? `${lookupStr}::${variantStr}` : lookupStr;
       const resolved: ProductLookupResolution = lookupStr
-        ? resolveProductLookup(lookupIndex, lookupStr)
+        ? resolveProductLookup(lookupIndex, lookupWithVariant)
         : { productId: null, ambiguous: false };
       const productId = resolved.productId;
       const qty = getRequiredNumber(r, 'quantity');
