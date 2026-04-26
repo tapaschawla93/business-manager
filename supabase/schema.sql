@@ -2572,7 +2572,8 @@ create or replace function public.save_sale(
   p_customer_phone text default null,
   p_customer_address text default null,
   p_sale_type text default null,
-  p_sale_tag_id uuid default null
+  p_sale_tag_id uuid default null,
+  p_skip_stock_check boolean default false
 )
 returns jsonb
 language plpgsql
@@ -2710,33 +2711,35 @@ begin
       raise exception 'Product not found or inactive';
     end if;
 
-    if not exists (
+    if not p_skip_stock_check and not exists (
       select 1 from public.product_components pc where pc.product_id = v_product_id
     ) then
       perform public.inventory_apply_delta(v_bid, v_product_id, -v_qty);
     end if;
 
-    for r_component in
-      select pc.inventory_item_id, pc.quantity_per_unit
-      from public.product_components pc
-      where pc.product_id = v_product_id
-    loop
-      v_component_delta := round((r_component.quantity_per_unit * v_qty)::numeric, 3);
-      update public.inventory_items ii
-      set
-        current_stock = round((ii.current_stock - v_component_delta)::numeric, 3),
-        updated_at = now()
-      where ii.id = r_component.inventory_item_id
-        and ii.business_id = v_bid
-      returning current_stock into v_component_stock;
+    if not p_skip_stock_check then
+      for r_component in
+        select pc.inventory_item_id, pc.quantity_per_unit
+        from public.product_components pc
+        where pc.product_id = v_product_id
+      loop
+        v_component_delta := round((r_component.quantity_per_unit * v_qty)::numeric, 3);
+        update public.inventory_items ii
+        set
+          current_stock = round((ii.current_stock - v_component_delta)::numeric, 3),
+          updated_at = now()
+        where ii.id = r_component.inventory_item_id
+          and ii.business_id = v_bid
+        returning current_stock into v_component_stock;
 
-      if v_component_stock is null then
-        raise exception 'Component inventory item not found for this business';
-      end if;
-      if v_component_stock < 0 then
-        raise exception 'Insufficient component stock for this sale';
-      end if;
-    end loop;
+        if v_component_stock is null then
+          raise exception 'Component inventory item not found for this business';
+        end if;
+        if v_component_stock < 0 then
+          raise exception 'Insufficient component stock for this sale';
+        end if;
+      end loop;
+    end if;
 
     v_vs_mrp := round((v_sale_price - v_mrp)::numeric, 2);
     v_line_profit := round(((v_sale_price - v_cost) * v_qty)::numeric, 2);
@@ -2769,8 +2772,8 @@ begin
 end;
 $$;
 
-revoke all on function public.save_sale(date, text, text, text, jsonb, text, text, text, uuid) from public;
-grant execute on function public.save_sale(date, text, text, text, jsonb, text, text, text, uuid) to authenticated;
+revoke all on function public.save_sale(date, text, text, text, jsonb, text, text, text, uuid, boolean) from public;
+grant execute on function public.save_sale(date, text, text, text, jsonb, text, text, text, uuid, boolean) to authenticated;
 
 create or replace function public.update_sale(
   p_sale_id uuid,

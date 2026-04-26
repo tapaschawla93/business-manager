@@ -55,6 +55,9 @@ import { archiveSaleWithClientFallback } from '@/lib/archiveSale';
 import { fetchDefaultSaleTagId } from '@/lib/queries/saleTags';
 import { ModuleCsvMenu } from '@/components/ModuleCsvMenu';
 
+const UUID_RE =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
 function formatDateShort(iso: string): string {
   try {
     return new Date(iso).toLocaleString('en-IN', {
@@ -183,6 +186,8 @@ export default function SalesPage() {
       toast.error(tagErr?.message ?? defErr?.message ?? 'Could not load tags');
       return;
     }
+    const productRowsTyped = (productRows ?? []) as { id: string; name: string; variant: string | null }[];
+    const productIds = new Set(productRowsTyped.map((p) => p.id));
 
     const tagList = (tagRows ?? []) as { id: string; label: string }[];
     function resolveImportTag(raw: string): string | null {
@@ -194,9 +199,7 @@ export default function SalesPage() {
       return hit?.id ?? null;
     }
 
-    const lookupIndex = buildProductLookupMap(
-      (productRows ?? []) as { id: string; name: string; variant: string | null }[],
-    );
+    const lookupIndex = buildProductLookupMap(productRowsTyped);
 
     type Group = {
       rowNos: number[];
@@ -221,14 +224,16 @@ export default function SalesPage() {
       const saleTypeRaw = getString(r, 'sale_type').toUpperCase();
       const tagRaw = getString(r, 'tag');
       const resolvedTagId = resolveImportTag(tagRaw);
-      const lookupStr = getString(r, 'product_lookup');
-      const variantStr = getString(r, 'variant');
+      const lookupStr = getString(r, 'product_lookup') || getString(r, 'product_name');
+      const variantStr =
+        getString(r, 'variant') || getString(r, 'Variant') || getString(r, 'product_variant');
       const lookupWithVariant =
         lookupStr && variantStr && !lookupStr.includes('::') ? `${lookupStr}::${variantStr}` : lookupStr;
-      const resolved: ProductLookupResolution = lookupStr
-        ? resolveProductLookup(lookupIndex, lookupWithVariant)
-        : { productId: null, ambiguous: false };
-      const productId = resolved.productId;
+      const productIdRaw = getString(r, 'product_id');
+      const resolved: ProductLookupResolution =
+        lookupStr || variantStr ? resolveProductLookup(lookupIndex, lookupWithVariant) : { productId: null, ambiguous: false };
+      const productId =
+        productIdRaw && UUID_RE.test(productIdRaw) && productIds.has(productIdRaw) ? productIdRaw : resolved.productId;
       const qty = getRequiredNumber(r, 'quantity');
       const salePrice = getRequiredNumber(r, 'sale_price');
 
@@ -310,6 +315,7 @@ export default function SalesPage() {
         p_notes: group.notes,
         p_lines: group.lines,
         p_sale_tag_id: group.saleTagId,
+        p_skip_stock_check: true,
       });
       if (error) {
         issues.push({ row: group.rowNos[0], field: 'sale_ref', message: `${ref}: ${error.message}` });

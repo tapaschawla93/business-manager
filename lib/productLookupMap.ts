@@ -2,7 +2,17 @@ import type { Product } from '@/lib/types/product';
 
 /** Shown when two or more catalog rows share the same `product_lookup` key. */
 export const PRODUCT_LOOKUP_AMBIGUOUS_MESSAGE =
-  'multiple products match; rename duplicates in Products or use name::variant';
+  'multiple products match; use variant column or product_lookup as name::variant';
+
+function normalizeLookupToken(value: string): string {
+  return value.trim().toLowerCase().replace(/\s+/g, ' ');
+}
+
+function composeLookupKey(name: string, variant: string): string {
+  const nk = normalizeLookupToken(name);
+  const vk = normalizeLookupToken(variant);
+  return vk ? `${nk}::${vk}` : nk;
+}
 
 /**
  * Unambiguous name / name::variant keys → product id. Keys that matched more than one
@@ -33,10 +43,11 @@ export function buildProductLookupMap(
   };
 
   for (const p of products) {
-    const nameKey = p.name.trim().toLowerCase();
+    const nameKey = normalizeLookupToken(p.name);
     addKey(nameKey, p.id);
-    if (p.variant && p.variant.trim() !== '') {
-      addKey(`${nameKey}::${p.variant.trim().toLowerCase()}`, p.id);
+    const variantKey = normalizeLookupToken(p.variant ?? '');
+    if (variantKey) {
+      addKey(composeLookupKey(nameKey, variantKey), p.id);
     }
   }
 
@@ -63,7 +74,12 @@ export type ProductLookupResolution = {
  * Resolve `raw` against a pre-built index (trim + lowercase). Empty input → not found, not ambiguous.
  */
 export function resolveProductLookup(index: ProductLookupIndex, raw: string): ProductLookupResolution {
-  const k = raw.trim().toLowerCase();
+  const trimmed = raw.trim();
+  const rawParts = trimmed.split('::');
+  const k =
+    rawParts.length >= 2
+      ? composeLookupKey(rawParts[0] ?? '', rawParts.slice(1).join('::'))
+      : normalizeLookupToken(trimmed);
   if (!k) {
     return { productId: null, ambiguous: false };
   }
