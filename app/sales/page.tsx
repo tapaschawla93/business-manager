@@ -142,7 +142,7 @@ export default function SalesPage() {
       'product_lookup',
       'variant',
       'quantity',
-      'sale_price',
+      'total_amount',
     ];
     const rowsTemplate = [
       {
@@ -158,7 +158,7 @@ export default function SalesPage() {
         product_lookup: 'Sample Product A',
         variant: '',
         quantity: '2',
-        sale_price: '1500',
+        total_amount: '3000',
       },
     ];
     downloadCsv('template_sales.csv', rowsToCsv(headers, rowsTemplate));
@@ -235,7 +235,14 @@ export default function SalesPage() {
       const productId =
         productIdRaw && UUID_RE.test(productIdRaw) && productIds.has(productIdRaw) ? productIdRaw : resolved.productId;
       const qty = getRequiredNumber(r, 'quantity');
-      const salePrice = getRequiredNumber(r, 'sale_price');
+      const totalAmount =
+        getRequiredNumber(r, 'total_amount') ??
+        getRequiredNumber(r, 'sale_amount') ??
+        getRequiredNumber(r, 'line_total');
+      const unitSalePrice = getRequiredNumber(r, 'sale_price');
+      const effectiveTotalAmount = totalAmount ?? (qty !== null && unitSalePrice !== null ? qty * unitSalePrice : null);
+      const effectiveUnitPrice =
+        qty !== null && qty > 0 && effectiveTotalAmount !== null ? effectiveTotalAmount / qty : null;
 
       if (!ref) issues.push({ row: rowNo, field: 'sale_ref', message: 'required' });
       if (!date) issues.push({ row: rowNo, field: 'date', message: 'invalid date (use YYYY-MM-DD or DD/MM/YYYY)' });
@@ -246,7 +253,13 @@ export default function SalesPage() {
         issues.push({ row: rowNo, field: 'sale_type', message: 'must be B2C/B2B/B2B2C' });
       }
       if (qty === null || qty <= 0) issues.push({ row: rowNo, field: 'quantity', message: 'must be > 0' });
-      if (salePrice === null || salePrice < 0) issues.push({ row: rowNo, field: 'sale_price', message: 'must be >= 0' });
+      if (effectiveTotalAmount === null || effectiveTotalAmount < 0) {
+        issues.push({
+          row: rowNo,
+          field: 'total_amount',
+          message: 'must be >= 0 (or provide sale_price for unit price format)',
+        });
+      }
       if (resolved.ambiguous) {
         issues.push({ row: rowNo, field: 'product_lookup', message: PRODUCT_LOOKUP_AMBIGUOUS_MESSAGE });
       } else if (!productId) {
@@ -266,8 +279,8 @@ export default function SalesPage() {
         (paymentMode !== 'cash' && paymentMode !== 'online') ||
         qty === null ||
         qty <= 0 ||
-        salePrice === null ||
-        salePrice < 0 ||
+        effectiveUnitPrice === null ||
+        effectiveUnitPrice < 0 ||
         !productId ||
         !resolvedTagId
       ) {
@@ -298,7 +311,7 @@ export default function SalesPage() {
       }
 
       draft.rowNos.push(rowNo);
-      draft.lines.push({ product_id: productId, quantity: qty, sale_price: salePrice });
+      draft.lines.push({ product_id: productId, quantity: qty, sale_price: effectiveUnitPrice });
       groups.set(ref, draft);
     });
 
