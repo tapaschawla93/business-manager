@@ -58,6 +58,20 @@ import { ModuleCsvMenu } from '@/components/ModuleCsvMenu';
 const UUID_RE =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
+function normalizeHeaderKey(key: string): string {
+  return key.trim().toLowerCase().replace(/\s+/g, '_');
+}
+
+function getStringByAliases(row: Record<string, string>, aliases: string[]): string {
+  const normalizedEntries = Object.entries(row).map(([k, v]) => [normalizeHeaderKey(k), v] as const);
+  for (const alias of aliases) {
+    const target = normalizeHeaderKey(alias);
+    const hit = normalizedEntries.find(([k]) => k === target);
+    if (hit) return String(hit[1] ?? '').trim();
+  }
+  return '';
+}
+
 function formatDateShort(iso: string): string {
   try {
     return new Date(iso).toLocaleString('en-IN', {
@@ -82,6 +96,8 @@ export default function SalesPage() {
   const [dialogOpen, setDialogOpen] = useState(false);
   const [editingSale, setEditingSale] = useState<SaleListRow | null>(null);
   const [archiveSaleId, setArchiveSaleId] = useState<string | null>(null);
+  const [selectedSaleIds, setSelectedSaleIds] = useState<Set<string>>(new Set());
+  const [bulkDeleteOpen, setBulkDeleteOpen] = useState(false);
   const [importing, setImporting] = useState(false);
 
   const load = useCallback(async () => {
@@ -101,6 +117,16 @@ export default function SalesPage() {
     if (!ready) return;
     void load();
   }, [ready, load]);
+
+  useEffect(() => {
+    if (!rows) return;
+    const current = new Set(rows.map((r) => r.sale.id));
+    setSelectedSaleIds((prev) => {
+      const next = new Set<string>();
+      for (const id of prev) if (current.has(id)) next.add(id);
+      return next;
+    });
+  }, [rows]);
 
   function openNewSaleDialog() {
     setEditingSale(null);
@@ -125,6 +151,30 @@ export default function SalesPage() {
         ? 'Sale removed (dev-only fallback without archive_sale RPC — use migrations in production).'
         : 'Sale removed',
     );
+    void load();
+  }
+
+  async function confirmBulkArchiveSales() {
+    if (session.kind !== 'ready' || selectedSaleIds.size === 0) return;
+    setBulkDeleteOpen(false);
+    const ids = Array.from(selectedSaleIds);
+    const supabase = getSupabaseClient();
+    let deleted = 0;
+    let failed = 0;
+    for (const saleId of ids) {
+      const { error } = await archiveSaleWithClientFallback(supabase, {
+        saleId,
+        businessId: session.businessId,
+      });
+      if (error) failed += 1;
+      else deleted += 1;
+    }
+    setSelectedSaleIds(new Set());
+    if (failed > 0) {
+      toast.error(`Deleted ${deleted} sale(s), ${failed} failed.`);
+    } else {
+      toast.success(`Deleted ${deleted} sale(s).`);
+    }
     void load();
   }
 
@@ -224,23 +274,29 @@ export default function SalesPage() {
       const saleTypeRaw = getString(r, 'sale_type').toUpperCase();
       const tagRaw = getString(r, 'tag');
       const resolvedTagId = resolveImportTag(tagRaw);
-      const lookupStr = getString(r, 'product_lookup') || getString(r, 'product_name');
-      const variantStr =
-        getString(r, 'variant') || getString(r, 'Variant') || getString(r, 'product_variant');
+      const lookupStr = getStringByAliases(r, ['product_lookup', 'product_name', 'product']);
+      const variantStr = getStringByAliases(r, ['variant', 'product_variant']);
       const lookupWithVariant =
         lookupStr && variantStr && !lookupStr.includes('::') ? `${lookupStr}::${variantStr}` : lookupStr;
-      const productIdRaw = getString(r, 'product_id');
-      const resolved: ProductLookupResolution =
+      const productIdRaw = getStringByAliases(r, ['product_id']);
+      const resolvedVariantFirst: ProductLookupResolution =
+        lookupStr && variantStr
+          ? resolveProductLookup(lookupIndex, `${lookupStr}::${variantStr}`)
+          : { productId: null, ambiguous: false };
+      const resolvedGeneral: ProductLookupResolution =
         lookupStr || variantStr ? resolveProductLookup(lookupIndex, lookupWithVariant) : { productId: null, ambiguous: false };
       const productId =
-        productIdRaw && UUID_RE.test(productIdRaw) && productIds.has(productIdRaw) ? productIdRaw : resolved.productId;
+        productIdRaw && UUID_RE.test(productIdRaw) && productIds.has(productIdRaw)
+          ? productIdRaw
+          : resolvedVariantFirst.productId ?? resolvedGeneral.productId;
       const qty = getRequiredNumber(r, 'quantity');
       const totalAmount =
         getRequiredNumber(r, 'total_amount') ??
         getRequiredNumber(r, 'sale_amount') ??
-        getRequiredNumber(r, 'line_total');
-      const unitSalePrice = getRequiredNumber(r, 'sale_price');
-      const effectiveTotalAmount = totalAmount ?? (qty !== null && unitSalePrice !== null ? qty * unitSalePrice : null);
+        getRequiredNumber(r, 'line_total') ??
+        getRequiredNumber(r, 'sale_price');
+      // CSV import uses line totals; convert to unit price for RPC storage.
+      const effectiveTotalAmount = totalAmount;
       const effectiveUnitPrice =
         qty !== null && qty > 0 && effectiveTotalAmount !== null ? effectiveTotalAmount / qty : null;
 
@@ -260,7 +316,7 @@ export default function SalesPage() {
           message: 'must be >= 0 (or provide sale_price for unit price format)',
         });
       }
-      if (resolved.ambiguous) {
+      if (resolvedVariantFirst.ambiguous || resolvedGeneral.ambiguous) {
         issues.push({ row: rowNo, field: 'product_lookup', message: PRODUCT_LOOKUP_AMBIGUOUS_MESSAGE });
       } else if (!productId) {
         issues.push({ row: rowNo, field: 'product_lookup', message: 'no matching product' });
@@ -369,6 +425,11 @@ export default function SalesPage() {
     return <p className="text-sm text-destructive">{session.message}</p>;
   }
 
+  const visibleSaleIds = (rows ?? []).map((r) => r.sale.id);
+  const selectableCount = visibleSaleIds.length;
+  const selectedCount = selectedSaleIds.size;
+  const allSelected = selectableCount > 0 && selectedCount === selectableCount;
+
   return (
     <div className="space-y-8">
       <PageHeader
@@ -376,6 +437,15 @@ export default function SalesPage() {
         description="Track all your customer orders and revenue."
         actions={
           <>
+            <Button
+              type="button"
+              variant="outline"
+              className="h-10 rounded-xl text-sm font-semibold md:h-11 md:text-base"
+              disabled={!ready || selectedCount === 0}
+              onClick={() => setBulkDeleteOpen(true)}
+            >
+              Delete selected ({selectedCount})
+            </Button>
             <Button
               type="button"
               className="h-10 gap-2 rounded-xl text-sm font-semibold shadow-sm md:h-11 md:text-base"
@@ -413,6 +483,17 @@ export default function SalesPage() {
             <Table>
               <TableHeader>
                 <TableRow className="border-border/60 bg-muted/50 hover:bg-muted/50">
+                  <TableHead className="w-[44px] py-4 text-center">
+                    <input
+                      type="checkbox"
+                      aria-label="Select all sales"
+                      checked={allSelected}
+                      onChange={(e) => {
+                        if (e.target.checked) setSelectedSaleIds(new Set(visibleSaleIds));
+                        else setSelectedSaleIds(new Set());
+                      }}
+                    />
+                  </TableHead>
                   <TableHead className="ui-table-head py-4">Order #</TableHead>
                   <TableHead className="ui-table-head py-4">Date</TableHead>
                   <TableHead className="ui-table-head py-4">Tag</TableHead>
@@ -431,13 +512,13 @@ export default function SalesPage() {
               <TableBody>
                 {loading ? (
                   <TableRow>
-                    <TableCell colSpan={13} className="py-12 text-center text-muted-foreground">
+                    <TableCell colSpan={14} className="py-12 text-center text-muted-foreground">
                       Loading sales…
                     </TableCell>
                   </TableRow>
                 ) : !rows?.length ? (
                   <TableRow>
-                    <TableCell colSpan={13} className="py-16">
+                    <TableCell colSpan={14} className="py-16">
                       <div className="flex flex-col items-center justify-center gap-2 text-center">
                         <p className="text-sm font-semibold text-foreground">No sales yet</p>
                         <p className="text-sm text-muted-foreground">Record your first sale with New Sale.</p>
@@ -451,6 +532,21 @@ export default function SalesPage() {
                 ) : (
                   rows.map((r) => (
                     <TableRow key={r.sale.id} className="border-border/50">
+                      <TableCell className="text-center">
+                        <input
+                          type="checkbox"
+                          aria-label={`Select order ${orderLabel(r.sale.id)}`}
+                          checked={selectedSaleIds.has(r.sale.id)}
+                          onChange={(e) => {
+                            setSelectedSaleIds((prev) => {
+                              const next = new Set(prev);
+                              if (e.target.checked) next.add(r.sale.id);
+                              else next.delete(r.sale.id);
+                              return next;
+                            });
+                          }}
+                        />
+                      </TableCell>
                       <TableCell className="font-mono text-[10px] font-medium leading-tight text-foreground md:text-[11px]">
                         {orderLabel(r.sale.id)}
                       </TableCell>
@@ -573,6 +669,27 @@ export default function SalesPage() {
               onClick={() => void confirmArchiveSale()}
             >
               Delete
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      <AlertDialog open={bulkDeleteOpen} onOpenChange={setBulkDeleteOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Delete selected sales?</AlertDialogTitle>
+            <AlertDialogDescription>
+              This will permanently delete {selectedCount} selected sale record(s). Line quantities are returned to inventory
+              (ledger or BOM components). This cannot be undone.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+              onClick={() => void confirmBulkArchiveSales()}
+            >
+              Delete selected
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
