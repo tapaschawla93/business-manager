@@ -64,6 +64,8 @@ export default function CustomersPage() {
   const [editOpen, setEditOpen] = useState(false);
   const [saving, setSaving] = useState(false);
   const [deleting, setDeleting] = useState<CustomerListRow | null>(null);
+  const [selectedCustomerIds, setSelectedCustomerIds] = useState<Set<string>>(new Set());
+  const [bulkDeleteOpen, setBulkDeleteOpen] = useState(false);
   const [editingDraft, setEditingDraft] = useState({ name: '', phone: '', address: '' });
   const [importing, setImporting] = useState(false);
 
@@ -92,6 +94,15 @@ export default function CustomersPage() {
       return nameMatch && repeatMatch;
     });
   }, [rows, search, repeatOnly]);
+
+  useEffect(() => {
+    const visible = new Set(filtered.map((r) => r.customerId).filter((id): id is string => !!id));
+    setSelectedCustomerIds((prev) => {
+      const next = new Set<string>();
+      for (const id of prev) if (visible.has(id)) next.add(id);
+      return next;
+    });
+  }, [filtered]);
 
   async function openDetail(row: CustomerListRow) {
     setSelected(row);
@@ -177,6 +188,23 @@ export default function CustomersPage() {
     }
     toast.success('Customer deleted');
     setDeleting(null);
+    void load();
+  }
+
+  async function confirmBulkDeleteCustomers() {
+    if (selectedCustomerIds.size === 0) return;
+    setBulkDeleteOpen(false);
+    const supabase = getSupabaseClient();
+    let deleted = 0;
+    let failed = 0;
+    for (const id of selectedCustomerIds) {
+      const { error } = await supabase.from('customers').delete().eq('id', id);
+      if (error) failed += 1;
+      else deleted += 1;
+    }
+    setSelectedCustomerIds(new Set());
+    if (failed > 0) toast.error(`Deleted ${deleted} customer(s), ${failed} failed.`);
+    else toast.success(`Deleted ${deleted} customer(s).`);
     void load();
   }
 
@@ -288,13 +316,24 @@ export default function CustomersPage() {
         title="Customers"
         description="Customer directory with repeat-customer insights and order history."
         actions={
-          <ModuleCsvMenu
-            menuAriaLabel="Customers CSV import"
-            busy={importing}
-            disabled={session.kind !== 'ready'}
-            onDownloadTemplate={downloadCustomersTemplate}
-            onFileSelected={(f) => void importCustomersFile(f)}
-          />
+          <>
+            <Button
+              type="button"
+              variant="outline"
+              className="h-10 rounded-xl text-sm font-semibold md:h-11 md:text-base"
+              disabled={selectedCustomerIds.size === 0}
+              onClick={() => setBulkDeleteOpen(true)}
+            >
+              Delete selected ({selectedCustomerIds.size})
+            </Button>
+            <ModuleCsvMenu
+              menuAriaLabel="Customers CSV import"
+              busy={importing}
+              disabled={session.kind !== 'ready'}
+              onDownloadTemplate={downloadCustomersTemplate}
+              onFileSelected={(f) => void importCustomersFile(f)}
+            />
+          </>
         }
       />
       <Card className="border-border/80 shadow-md">
@@ -314,6 +353,24 @@ export default function CustomersPage() {
                   onEdit={openEdit}
                   onDelete={setDeleting}
                   onCreate={createCustomerRecord}
+                  selectedIds={selectedCustomerIds}
+                  onToggleSelect={(id, checked) =>
+                    setSelectedCustomerIds((prev) => {
+                      const next = new Set(prev);
+                      if (checked) next.add(id);
+                      else next.delete(id);
+                      return next;
+                    })
+                  }
+                  onToggleSelectAll={(checked) => {
+                    if (checked) {
+                      setSelectedCustomerIds(
+                        new Set(filtered.map((r) => r.customerId).filter((id): id is string => !!id)),
+                      );
+                    } else {
+                      setSelectedCustomerIds(new Set());
+                    }
+                  }}
                 />
               </div>
               <div className="md:hidden">
@@ -391,6 +448,26 @@ export default function CustomersPage() {
               onClick={() => void confirmDelete()}
             >
               Delete
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      <AlertDialog open={bulkDeleteOpen} onOpenChange={setBulkDeleteOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Delete selected customers?</AlertDialogTitle>
+            <AlertDialogDescription>
+              Permanently delete {selectedCustomerIds.size} selected customer record(s).
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+              onClick={() => void confirmBulkDeleteCustomers()}
+            >
+              Delete selected
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>

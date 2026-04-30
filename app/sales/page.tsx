@@ -72,6 +72,20 @@ function getStringByAliases(row: Record<string, string>, aliases: string[]): str
   return '';
 }
 
+function parseCsvNumberFlexible(raw: string): number | null {
+  const cleaned = raw.replace(/[\s,]/g, '').trim();
+  if (!cleaned) return null;
+  const n = Number(cleaned);
+  return Number.isFinite(n) ? n : null;
+}
+
+function normalizePaymentMode(raw: string): 'cash' | 'online' | null {
+  const v = raw.trim().toLowerCase().replace(/\s+/g, '');
+  if (v === 'cash' || v === 'offline') return 'cash';
+  if (v === 'online' || v === 'upi' || v === 'card' || v === 'netbanking') return 'online';
+  return null;
+}
+
 function formatDateShort(iso: string): string {
   try {
     return new Date(iso).toLocaleString('en-IN', {
@@ -270,7 +284,7 @@ export default function SalesPage() {
       const ref = getString(r, 'sale_ref');
       const dateRaw = getString(r, 'date');
       const date = normalizeDateYmd(dateRaw);
-      const paymentMode = getString(r, 'payment_mode').toLowerCase();
+      const paymentMode = normalizePaymentMode(getStringByAliases(r, ['payment_mode', 'payment mode']));
       const saleTypeRaw = getString(r, 'sale_type').toUpperCase();
       const tagRaw = getString(r, 'tag');
       const resolvedTagId = resolveImportTag(tagRaw);
@@ -289,7 +303,7 @@ export default function SalesPage() {
         productIdRaw && UUID_RE.test(productIdRaw) && productIds.has(productIdRaw)
           ? productIdRaw
           : resolvedVariantFirst.productId ?? resolvedGeneral.productId;
-      const qty = getRequiredNumber(r, 'quantity');
+      const qty = parseCsvNumberFlexible(getStringByAliases(r, ['quantity', 'qty']));
       const totalAmount =
         getRequiredNumber(r, 'total_amount') ??
         getRequiredNumber(r, 'sale_amount') ??
@@ -302,7 +316,7 @@ export default function SalesPage() {
 
       if (!ref) issues.push({ row: rowNo, field: 'sale_ref', message: 'required' });
       if (!date) issues.push({ row: rowNo, field: 'date', message: 'invalid date (use YYYY-MM-DD or DD/MM/YYYY)' });
-      if (paymentMode !== 'cash' && paymentMode !== 'online') {
+      if (paymentMode === null) {
         issues.push({ row: rowNo, field: 'payment_mode', message: "must be 'cash' or 'online'" });
       }
       if (saleTypeRaw !== '' && !['B2C', 'B2B', 'B2B2C'].includes(saleTypeRaw)) {
@@ -332,7 +346,7 @@ export default function SalesPage() {
       if (
         !ref ||
         !date ||
-        (paymentMode !== 'cash' && paymentMode !== 'online') ||
+        paymentMode === null ||
         qty === null ||
         qty <= 0 ||
         effectiveUnitPrice === null ||

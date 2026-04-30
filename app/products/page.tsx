@@ -71,6 +71,8 @@ export default function ProductsPage() {
   const [saving, setSaving] = useState(false);
   const [dialogOpen, setDialogOpen] = useState(false);
   const [archiveTargetId, setArchiveTargetId] = useState<string | null>(null);
+  const [selectedProductIds, setSelectedProductIds] = useState<Set<string>>(new Set());
+  const [bulkDeleteOpen, setBulkDeleteOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const [importing, setImporting] = useState(false);
   const submitInFlightRef = useRef(false);
@@ -132,6 +134,15 @@ export default function ProductsPage() {
     void loadProducts();
     void loadInventoryOptions();
   }, [businessId, loadProducts, loadInventoryOptions]);
+
+  useEffect(() => {
+    const visible = new Set(filteredProducts.map((p) => p.id));
+    setSelectedProductIds((prev) => {
+      const next = new Set<string>();
+      for (const id of prev) if (visible.has(id)) next.add(id);
+      return next;
+    });
+  }, [filteredProducts]);
 
   const filteredProducts = useMemo(() => {
     const q = searchQuery.trim().toLowerCase();
@@ -360,6 +371,23 @@ export default function ProductsPage() {
     await loadProducts();
   }
 
+  async function confirmBulkArchiveProducts() {
+    if (!businessId || selectedProductIds.size === 0) return;
+    setBulkDeleteOpen(false);
+    const supabase = getSupabaseClient();
+    let deleted = 0;
+    let failed = 0;
+    for (const id of selectedProductIds) {
+      const { error: delErr } = await supabase.rpc('archive_product', { p_product_id: id });
+      if (delErr) failed += 1;
+      else deleted += 1;
+    }
+    setSelectedProductIds(new Set());
+    if (failed > 0) toast.error(`Deleted ${deleted} product(s), ${failed} failed.`);
+    else toast.success(`Deleted ${deleted} product(s).`);
+    await loadProducts();
+  }
+
   function downloadProductsTemplate() {
     const headers = ['name', 'category', 'mrp', 'cost_price', 'hsn_code', 'tax_pct', 'variant'];
     const rows = [
@@ -469,6 +497,15 @@ export default function ProductsPage() {
           <>
             <Button
               type="button"
+              variant="outline"
+              className="h-10 rounded-xl text-sm font-semibold md:h-11 md:text-base"
+              disabled={selectedProductIds.size === 0}
+              onClick={() => setBulkDeleteOpen(true)}
+            >
+              Delete selected ({selectedProductIds.size})
+            </Button>
+            <Button
+              type="button"
               onClick={openAdd}
               className="h-10 gap-2 rounded-xl text-sm font-semibold shadow-sm md:h-11 md:text-base"
             >
@@ -552,6 +589,17 @@ export default function ProductsPage() {
               <Table>
                 <TableHeader>
                   <TableRow className="border-border/60 bg-muted/50 hover:bg-muted/50">
+                    <TableHead className="w-[44px] text-center">
+                      <input
+                        type="checkbox"
+                        aria-label="Select all products"
+                        checked={filteredProducts.length > 0 && selectedProductIds.size === filteredProducts.length}
+                        onChange={(e) => {
+                          if (e.target.checked) setSelectedProductIds(new Set(filteredProducts.map((p) => p.id)));
+                          else setSelectedProductIds(new Set());
+                        }}
+                      />
+                    </TableHead>
                     <TableHead className="ui-table-head">Product name</TableHead>
                     <TableHead className="ui-table-head">Category</TableHead>
                     <TableHead className="ui-table-head">Variant</TableHead>
@@ -567,6 +615,21 @@ export default function ProductsPage() {
 
                     return (
                       <TableRow key={p.id} className="hover:bg-muted/40">
+                        <TableCell className="text-center">
+                          <input
+                            type="checkbox"
+                            aria-label="Select product"
+                            checked={selectedProductIds.has(p.id)}
+                            onChange={(e) =>
+                              setSelectedProductIds((prev) => {
+                                const next = new Set(prev);
+                                if (e.target.checked) next.add(p.id);
+                                else next.delete(p.id);
+                                return next;
+                              })
+                            }
+                          />
+                        </TableCell>
                         <TableCell className="font-medium text-foreground">{p.name}</TableCell>
                         <TableCell>
                           <Badge variant="secondary" className="rounded-md text-[10px] font-bold uppercase tracking-wide">
@@ -748,6 +811,29 @@ export default function ProductsPage() {
               </Button>
             </div>
           </DialogContent>
+      </Dialog>
+
+      <Dialog open={bulkDeleteOpen} onOpenChange={setBulkDeleteOpen}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>Delete selected products</DialogTitle>
+            <DialogDescription>
+              Permanently delete {selectedProductIds.size} selected product(s) where allowed by references.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
+            <Button type="button" variant="outline" onClick={() => setBulkDeleteOpen(false)}>
+              Cancel
+            </Button>
+            <Button
+              type="button"
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+              onClick={() => void confirmBulkArchiveProducts()}
+            >
+              Delete selected
+            </Button>
+          </div>
+        </DialogContent>
       </Dialog>
     </div>
   );

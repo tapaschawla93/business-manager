@@ -45,6 +45,21 @@ import { ModuleCsvMenu } from '@/components/ModuleCsvMenu';
 import { devError } from '@/lib/devLog';
 import { Switch } from '@/components/ui/switch';
 import { Label } from '@/components/ui/label';
+import { keyExpenses } from '@/lib/excel/dedupeRules';
+
+function parseCsvNumberFlexible(raw: string): number | null {
+  const cleaned = raw.replace(/[\s,]/g, '').trim();
+  if (!cleaned) return null;
+  const n = Number(cleaned);
+  return Number.isFinite(n) ? n : null;
+}
+
+function normalizePaymentMode(raw: string): 'cash' | 'online' | null {
+  const v = raw.trim().toLowerCase().replace(/\s+/g, '');
+  if (v === 'cash' || v === 'offline') return 'cash';
+  if (v === 'online' || v === 'upi' || v === 'card' || v === 'netbanking') return 'online';
+  return null;
+}
 
 export default function ExpensesPage() {
   const session = useBusinessSession({ onMissingBusiness: 'error' });
@@ -56,8 +71,17 @@ export default function ExpensesPage() {
   const [editing, setEditing] = useState<Expense | null>(null);
   const [dialogOpen, setDialogOpen] = useState(false);
   const [archiveTarget, setArchiveTarget] = useState<Expense | null>(null);
+  const [selectedExpenseIds, setSelectedExpenseIds] = useState<Set<string>>(new Set());
+  const [bulkDeleteOpen, setBulkDeleteOpen] = useState(false);
+  const [yearFilter, setYearFilter] = useState<'all' | string>('all');
   const [reverseInventoryOnDelete, setReverseInventoryOnDelete] = useState(false);
   const [importing, setImporting] = useState(false);
+
+  function sameSet(a: Set<string>, b: Set<string>): boolean {
+    if (a.size !== b.size) return false;
+    for (const x of a) if (!b.has(x)) return false;
+    return true;
+  }
 
   const loadExpenses = useCallback(async () => {
     if (!businessId) return;
@@ -74,6 +98,33 @@ export default function ExpensesPage() {
     }
     setExpenses(data ?? []);
   }, [businessId]);
+
+  const availableYears = Array.from(
+    new Set(
+      expenses
+        .map((e) => {
+          const d = new Date(e.date);
+          return Number.isFinite(d.getTime()) ? String(d.getFullYear()) : null;
+        })
+        .filter((y): y is string => !!y),
+    ),
+  ).sort((a, b) => Number(b) - Number(a));
+
+  const filteredExpenses = expenses.filter((e) => {
+    if (yearFilter === 'all') return true;
+    const d = new Date(e.date);
+    if (!Number.isFinite(d.getTime())) return false;
+    return String(d.getFullYear()) === yearFilter;
+  });
+
+  useEffect(() => {
+    const visible = new Set(filteredExpenses.map((e) => e.id));
+    setSelectedExpenseIds((prev) => {
+      const next = new Set<string>();
+      for (const id of prev) if (visible.has(id)) next.add(id);
+      return sameSet(prev, next) ? prev : next;
+    });
+  }, [filteredExpenses]);
 
   useEffect(() => {
     if (!businessId) return;
@@ -123,6 +174,26 @@ export default function ExpensesPage() {
     await loadExpenses();
   }
 
+  async function confirmBulkDeleteExpenses() {
+    if (!businessId || selectedExpenseIds.size === 0) return;
+    setBulkDeleteOpen(false);
+    const supabase = getSupabaseClient();
+    let deleted = 0;
+    let failed = 0;
+    for (const id of selectedExpenseIds) {
+      const { error: upErr } = await supabase.rpc('archive_expense', {
+        p_expense_id: id,
+        p_reverse_inventory: false,
+      });
+      if (upErr) failed += 1;
+      else deleted += 1;
+    }
+    setSelectedExpenseIds(new Set());
+    if (failed > 0) toast.error(`Deleted ${deleted} expense(s), ${failed} failed.`);
+    else toast.success(`Deleted ${deleted} expense(s).`);
+    await loadExpenses();
+  }
+
   function downloadExpensesTemplate() {
     const headers = [
       'date',
@@ -161,6 +232,7 @@ export default function ExpensesPage() {
     const { rows } = parseCsv(text);
     const issues: ImportIssue[] = [];
     const valid: { rowNo: number; payload: Record<string, unknown> }[] = [];
+    const skippedRows: Array<{ row: number; reason: string }> = [];
 
     const supabase = getSupabaseClient();
     const [{ data: tagRows, error: tagErr }, { data: defaultTagId, error: defErr }] = await Promise.all([
@@ -172,6 +244,17 @@ export default function ExpensesPage() {
       return;
     }
     const tagList = (tagRows ?? []) as { id: string; label: string }[];
+    const { data: existingRows, error: exErr } = await supabase
+      .from('expenses')
+      .select('date, vendor_name, item_description, total_amount')
+      .eq('business_id', businessId)
+      .is('deleted_at', null);
+    if (exErr) {
+      toast.error(exErr.message);
+      return;
+    }
+    const expenseKeys = new Set(((existingRows ?? []) as Record<string, unknown>[]).map(keyExpenses));
+    let skipped = 0;
     function resolveExpenseTag(raw: string): string | null {
       const s = raw.trim();
       if (!s) return defaultTagId ?? null;
@@ -185,21 +268,19 @@ export default function ExpensesPage() {
       const rowNo = idx + 2;
       const dateRaw = getString(r, 'date');
       const date = normalizeDateTimeIso(dateRaw);
-      const vendor = getString(r, 'vendor_name');
-      const item = getString(r, 'item_description');
-      const qty = getRequiredNumber(r, 'quantity');
-      const unitCost = getRequiredNumber(r, 'unit_cost');
-      const mode = getString(r, 'payment_mode').toLowerCase();
-      const totalRaw = getOptionalNumber(r, 'total_amount');
+      const vendor = getString(r, 'vendor_name') || 'Unknown Vendor';
+      const item = getString(r, 'item_description') || 'Misc expense';
+      const qty = parseCsvNumberFlexible(getString(r, 'quantity'));
+      const unitCost = parseCsvNumberFlexible(getString(r, 'unit_cost'));
+      const mode = normalizePaymentMode(getString(r, 'payment_mode'));
+      const totalRaw = getOptionalNumber(r, 'total_amount') ?? parseCsvNumberFlexible(getString(r, 'total_amount'));
       const expenseTagRaw = getString(r, 'expense_tag');
       const expenseTagId = resolveExpenseTag(expenseTagRaw);
 
       if (!date) issues.push({ row: rowNo, field: 'date', message: 'invalid date (use YYYY-MM-DD or DD/MM/YYYY)' });
-      if (!vendor) issues.push({ row: rowNo, field: 'vendor_name', message: 'required' });
-      if (!item) issues.push({ row: rowNo, field: 'item_description', message: 'required' });
       if (qty === null || qty <= 0) issues.push({ row: rowNo, field: 'quantity', message: 'must be > 0' });
       if (unitCost === null || unitCost < 0) issues.push({ row: rowNo, field: 'unit_cost', message: 'must be >= 0' });
-      if (mode !== 'cash' && mode !== 'online') issues.push({ row: rowNo, field: 'payment_mode', message: "must be 'cash' or 'online'" });
+      if (mode === null) issues.push({ row: rowNo, field: 'payment_mode', message: "must be cash or online" });
       if (!expenseTagId) {
         issues.push({
           row: rowNo,
@@ -210,32 +291,38 @@ export default function ExpensesPage() {
 
       if (
         date &&
-        vendor &&
-        item &&
         qty !== null &&
         qty > 0 &&
         unitCost !== null &&
         unitCost >= 0 &&
-        (mode === 'cash' || mode === 'online') &&
+        mode !== null &&
         expenseTagId
       ) {
+        const payload = {
+          business_id: businessId,
+          expense_tag_id: expenseTagId,
+          date,
+          vendor_name: vendor,
+          item_description: item,
+          quantity: qty,
+          unit_cost: unitCost,
+          total_amount: totalRaw ?? qty * unitCost,
+          payment_mode: mode,
+          notes: getString(r, 'notes') || null,
+          product_id: null,
+          update_inventory: false,
+          category: getString(r, 'category').trim() || null,
+        };
+        const dedupeKey = keyExpenses(payload);
+        if (dedupeKey && expenseKeys.has(dedupeKey)) {
+          skipped += 1;
+          skippedRows.push({ row: rowNo, reason: 'duplicate existing expense (skipped)' });
+          return;
+        }
+        if (dedupeKey) expenseKeys.add(dedupeKey);
         valid.push({
           rowNo,
-          payload: {
-            business_id: businessId,
-            expense_tag_id: expenseTagId,
-            date,
-            vendor_name: vendor,
-            item_description: item,
-            quantity: qty,
-            unit_cost: unitCost,
-            total_amount: totalRaw ?? qty * unitCost,
-            payment_mode: mode,
-            notes: getString(r, 'notes') || null,
-            product_id: null,
-            update_inventory: false,
-            category: getString(r, 'category').trim() || null,
-          },
+          payload,
         });
       }
     });
@@ -253,7 +340,17 @@ export default function ExpensesPage() {
     if (issues.length > 0) {
       downloadCsv('expenses_import_errors.csv', buildImportIssuesCsv(issues));
     }
-    toast.success(`Expenses import complete: ${inserted} inserted, ${issues.length} failed.`);
+    if (issues.length > 0 || skippedRows.length > 0) {
+      const reportRows = [
+        ...issues.map((i) => ({ row: i.row, field: i.field, message: i.message, status: 'error' })),
+        ...skippedRows.map((s) => ({ row: s.row, field: 'row', message: s.reason, status: 'skipped' })),
+      ];
+      downloadCsv(
+        'expenses_import_report.csv',
+        rowsToCsv(['row', 'field', 'message', 'status'], reportRows),
+      );
+    }
+    toast.success(`Expenses import complete: ${inserted} inserted, ${skipped} skipped, ${issues.length} failed.`);
     } catch (e) {
       devError('expenses import', e);
       toast.error(e instanceof Error ? e.message : 'Expenses import failed');
@@ -289,6 +386,33 @@ export default function ExpensesPage() {
         description="Operating costs and stock purchases. Use Stock Purchase when buying inventory (updates catalog cost and stock). Otherwise use a single amount and optional category."
         actions={
           <>
+            <div className="flex items-center gap-2">
+              <Label htmlFor="expenses-year-filter" className="text-xs text-muted-foreground">
+                Year
+              </Label>
+              <select
+                id="expenses-year-filter"
+                className="h-10 rounded-xl border border-input bg-background px-3 text-sm"
+                value={yearFilter}
+                onChange={(e) => setYearFilter(e.target.value)}
+              >
+                <option value="all">All years</option>
+                {availableYears.map((y) => (
+                  <option key={y} value={y}>
+                    {y}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <Button
+              type="button"
+              variant="outline"
+              className="h-10 rounded-xl text-sm font-semibold md:h-11 md:text-base"
+              disabled={selectedExpenseIds.size === 0}
+              onClick={() => setBulkDeleteOpen(true)}
+            >
+              Delete selected ({selectedExpenseIds.size})
+            </Button>
             <Button
               type="button"
               className="h-10 gap-2 rounded-xl text-sm font-semibold shadow-sm md:h-11 md:text-base"
@@ -311,11 +435,23 @@ export default function ExpensesPage() {
       {error && <p className="text-sm text-destructive">{error}</p>}
 
       <ExpenseList
-        expenses={expenses}
+        expenses={filteredExpenses}
         loading={loading}
         onEdit={(row) => openEdit(row)}
         onArchive={requestArchive}
         onRefresh={() => void loadExpenses()}
+        selectedIds={selectedExpenseIds}
+        onToggleSelect={(id, checked) =>
+          setSelectedExpenseIds((prev) => {
+            const next = new Set(prev);
+            if (checked) next.add(id);
+            else next.delete(id);
+            return next;
+          })
+        }
+        onToggleSelectAll={(checked) =>
+          setSelectedExpenseIds(checked ? new Set(filteredExpenses.map((e) => e.id)) : new Set())
+        }
       />
 
       <Dialog open={dialogOpen} onOpenChange={handleDialogOpenChange}>
@@ -386,6 +522,26 @@ export default function ExpensesPage() {
               onClick={() => void confirmArchive()}
             >
               Delete
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      <AlertDialog open={bulkDeleteOpen} onOpenChange={setBulkDeleteOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Delete selected expenses?</AlertDialogTitle>
+            <AlertDialogDescription>
+              This will permanently delete {selectedExpenseIds.size} selected expense record(s).
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+              onClick={() => void confirmBulkDeleteExpenses()}
+            >
+              Delete selected
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>

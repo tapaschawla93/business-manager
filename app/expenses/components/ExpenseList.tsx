@@ -26,13 +26,20 @@ export function ExpenseList({
   onEdit,
   onArchive,
   onRefresh,
+  selectedIds,
+  onToggleSelect,
+  onToggleSelectAll,
 }: {
   expenses: Expense[];
   loading: boolean;
   onEdit: (row: Expense) => void;
   onArchive: (row: Expense) => void;
   onRefresh: () => void;
+  selectedIds: Set<string>;
+  onToggleSelect: (id: string, checked: boolean) => void;
+  onToggleSelectAll: (checked: boolean) => void;
 }) {
+  const allSelected = expenses.length > 0 && selectedIds.size === expenses.length;
   return (
     <Card className="overflow-hidden border-border/80 shadow-md">
       <CardContent className="p-0">
@@ -59,6 +66,14 @@ export function ExpenseList({
                 <Table>
                   <TableHeader>
                     <TableRow className="border-border/60 bg-muted/50 hover:bg-muted/50">
+                      <TableHead className="w-[44px] py-4 text-center">
+                        <input
+                          type="checkbox"
+                          aria-label="Select all expenses"
+                          checked={allSelected}
+                          onChange={(e) => onToggleSelectAll(e.target.checked)}
+                        />
+                      </TableHead>
                       <TableHead className="ui-table-head py-4">Date</TableHead>
                       <TableHead className="ui-table-head py-4">Vendor</TableHead>
                       <TableHead className="ui-table-head py-4">Item</TableHead>
@@ -73,6 +88,14 @@ export function ExpenseList({
                   <TableBody>
                     {expenses.map((row) => (
                       <TableRow key={row.id} className="border-border/50">
+                        <TableCell className="text-center">
+                          <input
+                            type="checkbox"
+                            aria-label="Select expense"
+                            checked={selectedIds.has(row.id)}
+                            onChange={(e) => onToggleSelect(row.id, e.target.checked)}
+                          />
+                        </TableCell>
                         <TableCell className="whitespace-nowrap text-sm text-muted-foreground">
                           {formatDateShort(row.date)}
                         </TableCell>

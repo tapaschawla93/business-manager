@@ -76,6 +76,8 @@ export default function InventoryPage() {
   /** For edit: prior unit cost — RPC sync only when cost changes (add always syncs when linked). */
   const [baselineUnitCost, setBaselineUnitCost] = useState<number | null>(null);
   const [deleteLineTargetId, setDeleteLineTargetId] = useState<string | null>(null);
+  const [selectedInventoryIds, setSelectedInventoryIds] = useState<Set<string>>(new Set());
+  const [bulkDeleteOpen, setBulkDeleteOpen] = useState(false);
 
   const load = useCallback(async () => {
     if (!businessId) return;
@@ -128,6 +130,15 @@ export default function InventoryPage() {
     if (showZeroStock) return searchFiltered;
     return searchFiltered.filter((r) => Number(r.current_stock) > 0);
   }, [searchFiltered, showZeroStock]);
+
+  useEffect(() => {
+    const visible = new Set(visibleRows.map((r) => r.id));
+    setSelectedInventoryIds((prev) => {
+      const next = new Set<string>();
+      for (const id of prev) if (visible.has(id)) next.add(id);
+      return next;
+    });
+  }, [visibleRows]);
 
   const duplicateProductForAdd = useMemo(() => {
     if (editingId || !formProductId) return false;
@@ -357,14 +368,11 @@ export default function InventoryPage() {
    * Deletes a manual inventory row without relying on `delete_inventory_item` RPC (works even if that
    * migration was not applied). Pulls linked on-hand qty off the ledger first, then removes the row.
    */
-  async function confirmDeleteInventoryLine() {
-    const id = deleteLineTargetId;
-    if (!businessId || !id) return;
+  async function deleteInventoryLineById(id: string): Promise<string | null> {
+    if (!businessId) return 'Missing business context';
     const target = rows.find((r) => r.id === id);
-    setDeleteLineTargetId(null);
     if (!target) {
-      toast.error('That line is no longer in the list.');
-      return;
+      return 'That line is no longer in the list.';
     }
 
     const supabase = getSupabaseClient();
@@ -377,8 +385,7 @@ export default function InventoryPage() {
         p_delta: -stock,
       });
       if (dErr) {
-        toast.error(dErr.message);
-        return;
+        return dErr.message;
       }
     }
 
@@ -388,15 +395,42 @@ export default function InventoryPage() {
       .eq('id', id)
       .eq('business_id', businessId);
     if (delErr) {
-      toast.error(delErr.message);
-      return;
+      return delErr.message;
     }
 
-    toast.success('Inventory line removed');
     if (editingId === id) {
       resetForm();
       setDialogOpen(false);
     }
+    return null;
+  }
+
+  async function confirmDeleteInventoryLine() {
+    const id = deleteLineTargetId;
+    if (!id) return;
+    setDeleteLineTargetId(null);
+    const err = await deleteInventoryLineById(id);
+    if (err) {
+      toast.error(err);
+      return;
+    }
+    toast.success('Inventory line removed');
+    await load();
+  }
+
+  async function confirmBulkDeleteInventoryLines() {
+    if (selectedInventoryIds.size === 0) return;
+    setBulkDeleteOpen(false);
+    let deleted = 0;
+    let failed = 0;
+    for (const id of selectedInventoryIds) {
+      const err = await deleteInventoryLineById(id);
+      if (err) failed += 1;
+      else deleted += 1;
+    }
+    setSelectedInventoryIds(new Set());
+    if (failed > 0) toast.error(`Deleted ${deleted} line(s), ${failed} failed.`);
+    else toast.success(`Deleted ${deleted} line(s).`);
     await load();
   }
 
@@ -433,6 +467,15 @@ export default function InventoryPage() {
         description="Each line is tied to a catalog product. On-hand quantity stays in sync with sales and stock-purchase expenses. When adding a line, Units to Add increases stock for that product."
         actions={
           <>
+            <Button
+              type="button"
+              variant="outline"
+              className="h-10 rounded-xl text-sm font-semibold md:h-11 md:text-base"
+              disabled={selectedInventoryIds.size === 0}
+              onClick={() => setBulkDeleteOpen(true)}
+            >
+              Delete selected ({selectedInventoryIds.size})
+            </Button>
             <Button
               type="button"
               variant="outline"
@@ -551,6 +594,17 @@ export default function InventoryPage() {
                   <Table>
                     <TableHeader>
                       <TableRow className="border-border/60 bg-muted/50 hover:bg-muted/50">
+                        <TableHead className="w-[44px] text-center">
+                          <input
+                            type="checkbox"
+                            aria-label="Select all inventory lines"
+                            checked={visibleRows.length > 0 && selectedInventoryIds.size === visibleRows.length}
+                            onChange={(e) => {
+                              if (e.target.checked) setSelectedInventoryIds(new Set(visibleRows.map((r) => r.id)));
+                              else setSelectedInventoryIds(new Set());
+                            }}
+                          />
+                        </TableHead>
                         <TableHead className="ui-table-head">Name</TableHead>
                         <TableHead className="ui-table-head">Unit</TableHead>
                         <TableHead className="ui-table-head text-right">On hand</TableHead>
@@ -578,6 +632,21 @@ export default function InventoryPage() {
                                   : 'hover:bg-muted/40'
                             }
                           >
+                            <TableCell className="text-center">
+                              <input
+                                type="checkbox"
+                                aria-label="Select inventory line"
+                                checked={selectedInventoryIds.has(r.id)}
+                                onChange={(e) =>
+                                  setSelectedInventoryIds((prev) => {
+                                    const next = new Set(prev);
+                                    if (e.target.checked) next.add(r.id);
+                                    else next.delete(r.id);
+                                    return next;
+                                  })
+                                }
+                              />
+                            </TableCell>
                             <TableCell className="font-medium text-foreground">{r.name}</TableCell>
                             <TableCell className="text-sm text-muted-foreground">{r.unit}</TableCell>
                             <TableCell className="text-right tabular-nums">{r.current_stock}</TableCell>
@@ -646,6 +715,26 @@ export default function InventoryPage() {
               onClick={() => void confirmDeleteInventoryLine()}
             >
               Delete
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      <AlertDialog open={bulkDeleteOpen} onOpenChange={setBulkDeleteOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Delete selected inventory lines?</AlertDialogTitle>
+            <AlertDialogDescription>
+              Delete {selectedInventoryIds.size} selected inventory line(s). Linked stock ledger quantities are adjusted.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+              onClick={() => void confirmBulkDeleteInventoryLines()}
+            >
+              Delete selected
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>

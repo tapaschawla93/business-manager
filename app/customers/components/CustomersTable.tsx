@@ -18,6 +18,9 @@ type Props = {
   onEdit: (row: CustomerListRow) => void;
   onDelete: (row: CustomerListRow) => void;
   onCreate: (row: CustomerListRow) => void;
+  selectedIds: Set<string>;
+  onToggleSelect: (id: string, checked: boolean) => void;
+  onToggleSelectAll: (checked: boolean) => void;
 };
 
 function formatDate(iso: string | null): string {
@@ -29,11 +32,30 @@ function formatDate(iso: string | null): string {
   }
 }
 
-export function CustomersTable({ rows, onOpen, onEdit, onDelete, onCreate }: Props) {
+export function CustomersTable({
+  rows,
+  onOpen,
+  onEdit,
+  onDelete,
+  onCreate,
+  selectedIds,
+  onToggleSelect,
+  onToggleSelectAll,
+}: Props) {
+  const selectableIds = rows.map((r) => r.customerId).filter((id): id is string => !!id);
+  const allSelected = selectableIds.length > 0 && selectedIds.size === selectableIds.length;
   return (
     <Table>
       <TableHeader>
         <TableRow>
+          <TableHead className="w-[44px] text-center">
+            <input
+              type="checkbox"
+              aria-label="Select all customers"
+              checked={allSelected}
+              onChange={(e) => onToggleSelectAll(e.target.checked)}
+            />
+          </TableHead>
           <TableHead>Name</TableHead>
           <TableHead>Phone</TableHead>
           <TableHead>Order Count</TableHead>
@@ -51,6 +73,18 @@ export function CustomersTable({ rows, onOpen, onEdit, onDelete, onCreate }: Pro
               onClick={() => onOpen(row)}
               className={`cursor-pointer ${repeat ? 'bg-[#f0fdf4] hover:bg-[#e5f8ea]' : ''}`}
             >
+              <TableCell className="text-center" onClick={(e) => e.stopPropagation()}>
+                {row.customerId ? (
+                  <input
+                    type="checkbox"
+                    aria-label="Select customer"
+                    checked={selectedIds.has(row.customerId)}
+                    onChange={(e) => onToggleSelect(row.customerId as string, e.target.checked)}
+                  />
+                ) : (
+                  <span className="text-muted-foreground">—</span>
+                )}
+              </TableCell>
               <TableCell className="font-medium">{row.name}</TableCell>
               <TableCell>{row.phone ?? '-'}</TableCell>
               <TableCell>{row.orderCount}</TableCell>
