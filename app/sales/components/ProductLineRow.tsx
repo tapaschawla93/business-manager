@@ -75,8 +75,8 @@ export function ProductLineRow({
                     )}
                   >
                     {componentRowCount === 0
-                      ? 'No inventory BOM — only catalog stock (ledger) changes on save.'
-                      : `BOM: ${componentRowCount} component line${componentRowCount === 1 ? '' : 's'}`}
+                      ? 'No BOM on file — sales only adjust finished-goods catalog stock, not Inventory part lines.'
+                      : `BOM: ${componentRowCount} line${componentRowCount === 1 ? '' : 's'} (parts reduce on save)`}
                   </span>
                 ) : null}
               </div>

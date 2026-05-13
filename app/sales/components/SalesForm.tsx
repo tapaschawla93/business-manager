@@ -417,7 +417,7 @@ export function SalesForm({
       const distinctNoBom = [...new Set(noBomNames)];
       if (distinctNoBom.length > 0) {
         toast.warning(
-          `No inventory BOM for: ${distinctNoBom.join(', ')}. Only catalog stock (ledger) decreases on save — link components in Products to deduct raw materials.`,
+          `No bill of materials for: ${distinctNoBom.join(', ')}. This sale will only reduce finished-goods catalog stock — not separate component lines on Inventory. Map parts under Products → “Bill of materials (assembly)” for this SKU, then Save.`,
         );
       }
 
@@ -459,6 +459,11 @@ export function SalesForm({
             ? `Sale updated. Amount ${formatInrDisplay(row.total_amount)} · Profit ${formatInrDisplay(row.total_profit)}`
             : `Sale saved. Amount ${formatInrDisplay(row.total_amount)} · Profit ${formatInrDisplay(row.total_profit)}`,
         );
+        if (distinctNoBom.length > 0) {
+          toast.message('Component inventory unchanged', {
+            description: `${distinctNoBom.join(', ')} — no BOM is saved for those SKUs, so raw lines were not reduced. Add a bill of materials on Products if sales should consume parts.`,
+          });
+        }
       } else {
         toast.warning(
           'Saved, but the server response could not be read. Confirm under Settings → Export sales.',

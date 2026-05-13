@@ -740,15 +740,22 @@ export default function ProductsPage() {
                 </Field>
               </div>
               <div className="space-y-2 rounded-xl border border-border/70 p-3">
-                <div className="flex items-center justify-between">
-                  <p className="text-sm font-semibold text-foreground">Components</p>
-                  <Button type="button" variant="outline" className="h-8 text-xs" onClick={addComponentRow}>
-                    Add component
+                <div className="flex items-center justify-between gap-2">
+                  <p className="text-sm font-semibold text-foreground">Bill of materials (assembly)</p>
+                  <Button type="button" variant="outline" className="h-8 shrink-0 text-xs" onClick={addComponentRow}>
+                    Add line
                   </Button>
                 </div>
+                <p className="text-xs text-muted-foreground">
+                  Sales only reduce <span className="font-medium text-foreground/90">inventory component lines</span>{' '}
+                  when you map them here. Adding parts on the Inventory screen alone does not attach them to this
+                  product—without rows below, a sale only changes <span className="font-medium text-foreground/90">finished-goods catalog stock</span>{' '}
+                  for this SKU.
+                </p>
                 {componentsDraft.length === 0 ? (
                   <p className="text-xs text-muted-foreground">
-                    No components linked. Products without components keep backward-compatible sale behavior.
+                    No BOM lines yet. Leave empty for a simple product (one stock number on the catalog). Add lines for
+                    kits or builds that consume raw inventory items per unit sold.
                   </p>
                 ) : (
                   <div className="space-y-2">
